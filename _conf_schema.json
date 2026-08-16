@@ -1,0 +1,57 @@
+{
+  "llm_provider_id": {
+    "type": "string",
+    "description": "学习分析使用的 LLM 提供商",
+    "hint": "选择用于聊天记录学习分析的 LLM 提供商（模型）。留空则使用系统当前默认对话模型。",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "analysis_interval_seconds": {
+    "type": "int",
+    "description": "聊天记录分析频率（秒）",
+    "hint": "插件每隔多少秒对积累的聊天记录进行一次学习分析。默认值为 3600 (1小时)。",
+    "default": 3600
+  },
+  "maintenance_interval_seconds": {
+    "type": "int",
+    "description": "风格维护任务频率（秒）",
+    "hint": "插件每隔多少秒进行一次表征合并和容量清理。默认值为 86400 (24小时)。",
+    "default": 86400
+  },
+  "min_history_for_analysis": {
+    "type": "int",
+    "description": "触发分析的最少消息数",
+    "hint": "当一个会话的聊天记录达到此数量时，才会被纳入学习分析。默认值为 10。",
+    "default": 10
+  },
+  "max_specific_per_session": {
+    "type": "int",
+    "description": "每个会话的最大特定表征容量",
+    "hint": "每个会话最多可以存储多少条特定表征。超过此上限将淘汰触发次数最低的。默认值为 200。",
+    "default": 200
+  },
+  "max_contextual_per_session": {
+    "type": "int",
+    "description": "每个会话的最大情境表征容量",
+    "hint": "每个会话最多可以存储多少条情境表征。超过此上限将按 FIFO 淘汰最早的。默认值为 150。",
+    "default": 150
+  },
+  "enable_style_injection": {
+    "type": "bool",
+    "description": "启用风格注入",
+    "hint": "是否自动将学习到的风格注入到机器人的回复中。开启后，机器人会根据当前会话的风格调整自己的回复方式。",
+    "default": true
+  },
+  "enable_contextual_merge": {
+    "type": "bool",
+    "description": "情境缓冲合并到通用/特定",
+    "hint": "维护任务时是否尝试将缓冲位的情境表征按相似度合并到通用/特定。关闭则情境表征仅按 FIFO 淘汰，不向上合并。默认 true。",
+    "default": true
+  },
+  "webui_enabled": {
+    "type": "bool",
+    "description": "启用风格管理页面",
+    "hint": "在 AstrBot 面板（扩展 → 插件详情 → 打开插件页面）中管理各会话学习到的三层风格表征。需要 AstrBot v4.26+，旧版本将自动跳过注册。",
+    "default": true
+  }
+}

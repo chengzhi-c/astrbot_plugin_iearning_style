@@ -1,0 +1,232 @@
+import json
+import re
+from typing import Any
+
+from astrbot.api import logger
+from astrbot.api.star import Star
+
+from .data_manager import DataManager
+
+
+def _extract_json(text: str) -> str | None:
+    """从 LLM 输出提取最外层 JSON 对象，容忍围栏与尾随解释。
+
+    采用括号配平扫描，正确处理嵌套对象与字符串内的 ``{``/``}``。
+    不配平时返回 None，不强行截断造半个 JSON。
+    """
+    # 优先：```json ... ``` 围栏
+    m = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+    candidate = m.group(1) if m else text
+    start = candidate.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(candidate)):
+        ch = candidate[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return candidate[start : i + 1]
+    return None
+
+
+class LearningManager:
+    """
+    负责调用 LLM 进行学习和总结。
+    输入：[本轮对话] + [上轮通用表征] + [待升格特定提示] + [情境缓冲区提示]
+    输出：{universal, contextual, specific}
+    """
+
+    def __init__(self, star_instance: Star, data_manager: DataManager, config: dict):
+        self.star = star_instance
+        self.context = star_instance.context
+        self.data_manager = data_manager
+        self.config = config
+
+    def _get_provider(self):
+        """根据配置选择学习分析用的 LLM 提供商。
+
+        配置了 llm_provider_id 时优先用指定提供商；
+        找不到或未配置时回退到系统当前默认对话模型。
+        """
+        provider_id = self.config.get("llm_provider_id", "")
+        if provider_id:
+            prov = self.context.get_provider_by_id(provider_id)
+            if prov is not None:
+                return prov
+            logger.warning(
+                f"配置的学习提供商 ID '{provider_id}' 未找到，回退到默认对话模型。"
+            )
+        return self.context.get_using_provider()
+
+    async def analyze_and_learn(self, session_id: str):
+        min_history = self.config.get("min_history_for_analysis", 10)
+        chat_history = self.data_manager.get_chat_history(session_id, limit=100)
+        if len(chat_history) < min_history:
+            return
+
+        prompt = self._build_prompt(session_id, chat_history)
+
+        try:
+            provider = self._get_provider()
+            if provider is None:
+                logger.warning("未找到可用的 LLM 提供商，跳过本次学习分析。")
+                return
+
+            llm_response = await provider.text_chat(
+                prompt=prompt,
+                contexts=[],
+                system_prompt="你是一个群聊文化分析师，从聊天记录中提取这个群的说话风格、社交模式和内部梗。",
+            )
+
+            if llm_response.role == "assistant":
+                await self._parse_and_store_results(
+                    session_id, llm_response.completion_text
+                )
+                await self.data_manager.clear_chat_history(session_id)
+            else:
+                logger.warning(f"LLM 调用失败或返回非预期的角色: {llm_response.role}")
+
+        except Exception as e:
+            logger.error(f"分析学习过程中发生错误: {e}")
+
+    def _build_prompt(
+        self, session_id: str, chat_history: list[dict[str, Any]]
+    ) -> str:
+        history_str = "\n".join(
+            [f"{msg['sender']}: {msg['content']}" for msg in chat_history]
+        )
+
+        universal = self.data_manager.get_universal_for_session(session_id)
+        universal_list = [t["content"] for t in universal] if universal else []
+        universal_str = "\n".join(
+            [f"- {c}" for c in universal_list]
+        ) if universal_list else "(无)"
+
+        # 情境缓冲区提示
+        buffer_items = self.data_manager.get_contextual_buffer(session_id)
+        contextual_hint = ""
+        if buffer_items:
+            lines = [
+                f"- {t['scene']}→{t['behavior']}" for t in buffer_items
+            ]
+            contextual_hint = "\n".join(lines)
+
+        # 仅非首轮才提供的上下文
+        universal_section = ""
+        if universal_str and universal_str != "(无)":
+            universal_section = f"""
+上一轮已确认的通用风格：
+{universal_str}
+"""
+
+        contextual_section = ""
+        if contextual_hint:
+            contextual_section = f"""
+以下情境表征在观察中，判断是否可以合并到通用风格或特定梗释义中：
+{contextual_hint}
+"""
+
+        prompt = f"""
+分析以下聊天记录，提取该群的三层群聊文化特征。
+
+聊天记录：
+```
+{history_str}
+```
+{universal_section}
+{contextual_section}
+要求：
+1. 只返回有效 JSON，不要解释
+2. 格式：
+{{
+  "universal": ["特征1", "特征2"],
+  "contextual": [
+    {{"scene": "场景描述", "behavior": "行为描述"}},
+    ...
+  ],
+  "specific": [
+    {{"content": "梗+释义", "trigger_regex": "正则"}},
+    ...
+  ]
+}}
+
+3. universal 是"这个群整体说话是什么风格"——语气、用词习惯、聊天氛围。属于全群底色。
+   至少1条最多10条。如果已有上一轮，从中保留合适的并加入新的。
+
+4. contextual 是"群内存在什么社交模式"——某个场景出现时，群友会有怎样的固定反应。
+   格式为 scene（触发条件）→ behavior（群体反应）。没有则留空。
+
+5. specific 是"群里在用什么内部梗/暗号/流行语"——带释义，让外人也能理解。
+   content 包含释义（如"xx（用于表达xxx）"），trigger_regex 是能匹配用户相关表达的正则。
+   trigger_regex 必须是合法正则。没有则留空。
+
+示例输出：
+{{"universal": ["爱用表情包", "喜欢玩烂梗", "语气夸张"], "contextual": [{{"scene": "有人发消息", "behavior": "全员复读"}}, {{"scene": "群友自称萌新", "behavior": "假装也是萌新"}}], "specific": [{{"content": "xx（表达喜欢的意思）", "trigger_regex": "xx|x"}}]}}
+"""
+        return prompt
+
+    async def _parse_and_store_results(self, session_id: str, llm_output: str):
+        try:
+            json_str = _extract_json(llm_output)
+            if json_str is None:
+                logger.error(
+                    f"无法从 LLM 输出提取 JSON。原始输出: {llm_output}"
+                )
+                return
+            results = json.loads(json_str)
+
+            # 通用表征：全量替换
+            universal = results.get("universal", [])
+            if universal:
+                self.data_manager.replace_universal(session_id, universal)
+                logger.info(f"为会话 {session_id} 更新通用表征: {universal}")
+
+            # 情境表征：逐条添加
+            contextual = results.get("contextual", [])
+            for item in contextual:
+                scene = item.get("scene", "")
+                behavior = item.get("behavior", "")
+                if scene and behavior:
+                    self.data_manager.add_contextual(session_id, scene, behavior)
+
+            if contextual:
+                logger.info(
+                    f"为会话 {session_id} 添加情境表征: "
+                    f"{[f'{c['scene']}→{c['behavior']}' for c in contextual]}"
+                )
+
+            # 特定表征：逐条添加
+            specific = results.get("specific", [])
+            for item in specific:
+                content = item.get("content", "")
+                trigger_regex = item.get("trigger_regex", "")
+                if content and trigger_regex:
+                    self.data_manager.add_or_update_specific(
+                        session_id, content, trigger_regex
+                    )
+
+            if specific:
+                logger.info(
+                    f"为会话 {session_id} 添加特定表征: {[s['content'] for s in specific]}"
+                )
+
+            self.data_manager.check_specific_capacity(session_id)
+
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(f"解析 LLM 输出失败: {e}\n原始输出: {llm_output}")

@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>入乡随俗 · 风格管理 · 原型预览</title>
+<style>
+/* ============ Design Tokens ============ */
+:root{
+  --c-primary:#6D5EF6; --c-primary-600:#5B4BE0; --c-primary-50:#EEEBFF;
+  --c-universal:#6366F1; --c-contextual:#14B8A6; --c-specific:#F59E0B;
+  --c-success:#22C55E; --c-warning:#F97316; --c-danger:#EF4444; --c-info:#3B82F6;
+  --c-bg:#F5F6F8; --c-surface:#FFFFFF; --c-surface-2:#F0F2F5;
+  --c-border:#E3E6EB; --c-text:#1F2329; --c-text-2:#6B7280; --c-text-3:#9AA1AC;
+  --sh-1:0 1px 2px rgba(16,24,40,.06); --sh-2:0 4px 14px rgba(16,24,40,.08); --sh-3:0 12px 32px rgba(16,24,40,.14);
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-8:32px;--s-10:40px;
+  --r-1:8px;--r-2:12px;--r-pill:999px;
+  --t-fast:150ms;--t:250ms;--t-slow:400ms; --ease:cubic-bezier(.4,0,.2,1);
+  --font:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"JetBrains Mono",Consolas,monospace;
+}
+html[data-theme="dark"]{
+  --c-primary:#8B7EF9; --c-primary-600:#7A6CF0; --c-primary-50:#232038;
+  --c-universal:#818CF8; --c-contextual:#2DD4BF; --c-specific:#FBBF24;
+  --c-bg:#15171C; --c-surface:#1E2128; --c-surface-2:#262A33;
+  --c-border:#30353F; --c-text:#E6E8EC; --c-text-2:#9AA1AC; --c-text-3:#6B7280;
+  --sh-1:0 1px 2px rgba(0,0,0,.4); --sh-2:0 4px 14px rgba(0,0,0,.45); --sh-3:0 12px 32px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:14px/1.5 var(--font);background:var(--c-bg);color:var(--c-text);-webkit-font-smoothing:antialiased;transition:background var(--t),color var(--t)}
+button{font-family:inherit}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--c-border);border-radius:99px}
+
+/* ============ App Bar ============ */
+.appbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:var(--s-3);
+  padding:0 var(--s-4);height:56px;background:var(--c-surface);border-bottom:1px solid var(--c-border);box-shadow:var(--sh-1)}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo{width:30px;height:30px;border-radius:9px;flex:none;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,var(--c-primary),var(--c-contextual));font-size:16px;box-shadow:var(--sh-1)}
+.brand h1{font-size:15px;margin:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ver{font-size:11px;color:var(--c-text-3);border:1px solid var(--c-border);border-radius:var(--r-pill);padding:1px 8px;flex:none}
+.appbar .sp{flex:1}
+.status-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--c-text-2);
+  border:1px solid var(--c-border);border-radius:var(--r-pill);padding:4px 10px;background:var(--c-surface-2)}
+.dot{width:8px;height:8px;border-radius:50%}
+.dot.on{background:var(--c-success);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+.dot.off{background:var(--c-text-3)}
+.icon-btn{width:36px;height:36px;border-radius:var(--r-1);border:1px solid transparent;background:transparent;color:var(--c-text-2);cursor:pointer;display:grid;place-items:center;font-size:16px;transition:background var(--t-fast)}
+.icon-btn:hover{background:var(--c-surface-2);color:var(--c-text)}
+.hamburger{display:none}
+
+/* dirty banner */
+.dirty-banner{display:none;align-items:center;gap:10px;padding:8px var(--s-4);background:var(--c-warning);color:#fff;font-size:13px;z-index:25}
+.dirty-banner.show{display:flex}
+.dirty-banner .sp{flex:1}
+.dirty-banner b{font-weight:600}
+
+/* ============ Layout ============ */
+.shell{display:flex;height:calc(100vh - 56px)}
+.sidebar{width:282px;flex:none;background:var(--c-surface);border-right:1px solid var(--c-border);
+  display:flex;flex-direction:column;overflow:hidden}
+.side-head{padding:var(--s-4) var(--s-4) var(--s-2);display:flex;align-items:center;gap:8px}
+.side-head .title{font-weight:600;font-size:14px}
+.side-head .cnt{font-size:12px;color:var(--c-text-3);margin-left:auto}
+.search{position:relative;padding:0 var(--s-4) var(--s-3)}
+.search input{width:100%;padding:8px 10px 8px 32px;border:1px solid var(--c-border);border-radius:var(--r-1);
+  background:var(--c-surface-2);color:var(--c-text);font:inherit;outline:none;transition:border var(--t-fast),box-shadow var(--t-fast)}
+.search input:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px var(--c-primary-50)}
+.search svg{position:absolute;left:24px;top:50%;transform:translateY(-50%);color:var(--c-text-3)}
+.sess-list{flex:1;overflow:auto;padding:0 var(--s-2) var(--s-3)}
+.sess{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-1);cursor:pointer;margin-bottom:2px;transition:background var(--t-fast)}
+.sess:hover{background:var(--c-surface-2)}
+.sess.active{background:var(--c-primary-50);box-shadow:inset 3px 0 0 var(--c-primary)}
+.sess .sid{font-family:var(--mono);font-size:12px;color:var(--c-text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .mini{display:flex;gap:5px;flex:none}
+.mini i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.mini u{font-style:normal;font-size:10px;color:var(--c-text-3);margin-left:-2px}
+.sess .time{font-size:10px;color:var(--c-text-3);flex:none}
+.side-foot{padding:var(--s-3) var(--s-4);border-top:1px solid var(--c-border);font-size:12px;color:var(--c-text-3)}
+
+/* ============ Workspace ============ */
+.workspace{flex:1;min-width:0;overflow:auto;padding:var(--s-6)}
+.sess-head{display:flex;align-items:flex-start;gap:var(--s-3);flex-wrap:wrap;margin-bottom:var(--s-5)}
+.sess-head .info{min-width:0;flex:1}
+.sess-head .id{font-family:var(--mono);font-size:15px;font-weight:600;word-break:break-all}
+.sess-head .sub{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--c-text-2);
+  background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-pill);padding:3px 10px}
+.chip u{font-style:normal;width:7px;height:7px;border-radius:50%;display:inline-block}
+.sess-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Tabs */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--c-border);margin-bottom:var(--s-5);overflow-x:auto}
+.tab{flex:none;padding:10px 14px;cursor:pointer;color:var(--c-text-2);font-weight:500;border-bottom:2px solid transparent;
+  white-space:nowrap;transition:color var(--t-fast),border-color var(--t-fast);display:flex;align-items:center;gap:7px}
+.tab:hover{color:var(--c-text)}
+.tab.active{color:var(--c-primary);border-bottom-color:var(--c-primary)}
+.tab .bar{width:8px;height:8px;border-radius:50%}
+
+/* ============ Buttons ============ */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:0 14px;height:34px;border-radius:var(--r-1);
+  border:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text);cursor:pointer;font:inherit;font-weight:500;
+  transition:all var(--t-fast)}
+.btn:hover{background:var(--c-surface-2)}
+.btn:focus-visible{outline:2px solid var(--c-primary);outline-offset:2px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--c-primary);border-color:var(--c-primary);color:#fff}
+.btn.primary:hover{background:var(--c-primary-600);box-shadow:var(--sh-2)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--c-text-2)}
+.btn.ghost:hover{background:var(--c-surface-2);color:var(--c-text)}
+.btn.danger{background:var(--c-danger);border-color:var(--c-danger);color:#fff}
+.btn.danger:hover{filter:brightness(.93);box-shadow:var(--sh-2)}
+.btn.sm{height:28px;padding:0 10px;font-size:12px}
+.btn .spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ============ Panels ============ */
+.panel{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-2);box-shadow:var(--sh-1);margin-bottom:var(--s-5);overflow:hidden}
+.panel-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--c-border);flex-wrap:wrap}
+.panel-head .ttl{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px}
+.panel-head .ttl .bar{width:9px;height:9px;border-radius:50%}
+.panel-head .sp{flex:1}
+.panel-head .hint{width:100%;order:9;color:var(--c-text-3);font-size:12px;margin-top:2px}
+.dirty-tag{display:none;align-items:center;gap:5px;font-size:12px;color:var(--c-warning);font-weight:600}
+.panel.dirty .dirty-tag{display:inline-flex}
+.dirty-tag .d{width:8px;height:8px;border-radius:50%;background:var(--c-warning)}
+.panel-body{padding:var(--s-4) var(--s-5) var(--s-5)}
+.layer-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.layer-toolbar .search2{flex:1;min-width:160px;position:relative}
+.layer-toolbar .search2 input{width:100%;padding:7px 10px 7px 30px;border:1px solid var(--c-border);border-radius:var(--r-1);background:var(--c-surface-2);color:var(--c-text);font:inherit;outline:none}
+.layer-toolbar .search2 input:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px var(--c-primary-50)}
+.layer-toolbar .search2 svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--c-text-3)}
+
+/* rows */
+.row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px dashed var(--c-border)}
+.row:last-child{border-bottom:0}
+.row .inp{flex:1;min-width:80px;padding:8px 10px;border:1px solid var(--c-border);border-radius:var(--r-1);background:var(--c-surface);color:var(--c-text);font:inherit;outline:none;transition:border var(--t-fast),box-shadow var(--t-fast)}
+.row .inp:focus{border-color:var(--c-primary);box-shadow:0 0 0 3px var(--c-primary-50)}
+.row .inp.mono{font-family:var(--mono);font-size:12px}
+.row .inp.invalid{border-color:var(--c-danger);box-shadow:0 0 0 3px rgba(239,68,68,.15)}
+.row .arrow{color:var(--c-text-3);flex:none}
+.row .del{flex:none;width:30px;height:30px;border:0;background:transparent;color:var(--c-text-3);cursor:pointer;border-radius:var(--r-1);font-size:15px}
+.row .del:hover{background:rgba(239,68,68,.12);color:var(--c-danger)}
+.meta{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--c-text-3);background:var(--c-surface-2);border-radius:var(--r-pill);padding:2px 8px;flex:none}
+.buf{font-size:11px;color:var(--c-contextual);border:1px dashed var(--c-contextual);border-radius:var(--r-pill);padding:1px 7px}
+.pbar{flex:none;width:64px;height:6px;border-radius:99px;background:var(--c-surface-2);overflow:hidden}
+.pbar>span{display:block;height:100%;background:linear-gradient(90deg,var(--c-universal),var(--c-primary));border-radius:99px}
+
+/* ============ Overview ============ */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s-4);margin-bottom:var(--s-5)}
+.stat{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-2);padding:var(--s-4);box-shadow:var(--sh-1);border-top:3px solid var(--c-primary)}
+.stat.u{border-top-color:var(--c-universal)}
+.stat.c{border-top-color:var(--c-contextual)}
+.stat.s{border-top-color:var(--c-specific)}
+.stat .n{font-size:26px;font-weight:700}
+.stat .l{font-size:12px;color:var(--c-text-3);margin-top:2px}
+.stat .badge{font-size:11px;color:var(--c-text-2);margin-top:4px}
+.ov-2col{display:grid;grid-template-columns:1.3fr 1fr;gap:var(--s-5)}
+.portrait{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-2);padding:var(--s-5);box-shadow:var(--sh-1)}
+.portrait h3,.top h3{margin:0 0 10px;font-size:14px}
+.portrait .quote{background:var(--c-surface-2);border-left:3px solid var(--c-primary);border-radius:0 var(--r-1) var(--r-1) 0;padding:12px 14px;color:var(--c-text);font-size:13px;line-height:1.7}
+.portrait .seg{margin-bottom:10px}
+.portrait .seg b{color:var(--c-primary)}
+.top{background:var(--c-surface);border:1px solid var(--c-border);border-radius:var(--r-2);padding:var(--s-5);box-shadow:var(--sh-1)}
+.top ol{margin:0;padding-left:20px}
+.top li{margin-bottom:10px;font-size:13px}
+.top li .tc{font-size:11px;color:var(--c-text-3);margin-left:6px}
+
+/* ============ Empty ============ */
+.empty{text-align:center;padding:48px 16px;color:var(--c-text-3)}
+.empty svg{margin-bottom:12px;opacity:.7}
+.empty .t{font-size:15px;color:var(--c-text-2);font-weight:500;margin-bottom:6px}
+.empty .d{font-size:13px;max-width:360px;margin:0 auto 14px}
+
+/* ============ Modal / Toast ============ */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
+.overlay.show{display:flex}
+.modal{background:var(--c-surface);color:var(--c-text);border-radius:var(--r-2);padding:20px;width:min(360px,90vw);box-shadow:var(--sh-3);animation:pop var(--t) var(--ease)}
+@keyframes pop{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+.modal h3{margin:0 0 10px;font-size:16px}
+.modal p{margin:0 0 16px;color:var(--c-text-2);font-size:13px;line-height:1.6}
+.modal .acts{display:flex;gap:8px;justify-content:flex-end}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);background:#24292f;color:#fff;
+  padding:9px 16px;border-radius:var(--r-1);font-size:13px;opacity:0;transition:opacity var(--t-fast),transform var(--t-fast);pointer-events:none;z-index:60;box-shadow:var(--sh-3)}
+.toast.err{background:var(--c-warning)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ============ Help drawer ============ */
+.help-ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:55;justify-content:flex-end}
+.help-ov.show{display:flex}
+.help{width:min(420px,92vw);height:100%;background:var(--c-surface);padding:24px;overflow:auto;box-shadow:var(--sh-3);animation:slidein var(--t) var(--ease)}
+@keyframes slidein{from{transform:translateX(30px);opacity:.6}to{transform:translateX(0);opacity:1}}
+.help h2{margin:0 0 4px;font-size:18px}
+.help .lead{color:var(--c-text-3);font-size:13px;margin-bottom:16px}
+.help h4{margin:18px 0 6px;font-size:13px;color:var(--c-primary)}
+.help ul{margin:0;padding-left:18px;font-size:13px;color:var(--c-text-2);line-height:1.8}
+.help code{font-family:var(--mono);background:var(--c-surface-2);padding:1px 5px;border-radius:5px;font-size:12px}
+
+/* ============ Responsive ============ */
+@media (max-width:1023px){
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .ov-2col{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  .hamburger{display:grid}
+  .shell{position:relative}
+  .sidebar{position:fixed;top:56px;bottom:0;left:0;z-index:40;transform:translateX(-100%);transition:transform var(--t) var(--ease);box-shadow:var(--sh-3)}
+  .sidebar.open{transform:translateX(0)}
+  .scrim{position:fixed;inset:56px 0 0;background:rgba(0,0,0,.4);z-index:35;display:none}
+  .scrim.show{display:block}
+  .workspace{padding:var(--s-4)}
+  .row{flex-wrap:wrap}
+  .row .inp{flex:1 1 100%}
+  .row .arrow{display:none}
+  .stat-grid{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<!-- ============ App Bar ============ -->
+<header class="appbar">
+  <button class="icon-btn hamburger" id="hamb" aria-label="打开会话列表">☰</button>
+  <div class="brand">
+    <div class="logo">入</div>
+    <h1>入乡随俗 · 风格管理</h1>
+    <span class="ver">v1.0.1</span>
+  </div>
+  <span class="sp"></span>
+  <span class="status-pill" id="injectPill" title="风格注入开关（来自配置 enable_style_injection）">
+    <span class="dot on" id="injectDot"></span><span id="injectTxt">注入：开</span>
+  </span>
+  <button class="icon-btn" id="btnRefresh" aria-label="刷新数据" title="刷新">⟳</button>
+  <button class="icon-btn" id="btnTheme" aria-label="切换主题" title="切换明暗主题">🌓</button>
+  <button class="icon-btn" id="btnHelp" aria-label="帮助" title="帮助与说明">?</button>
+</header>
+<div class="dirty-banner" id="dirtyBanner">
+  <b>● 有未保存的修改</b>
+  <span class="sp"></span>
+  <button class="btn sm primary" id="saveAll2">保存全部</button>
+  <button class="btn sm ghost" id="discardAll2" style="color:#fff">丢弃</button>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="shell">
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="side-head">
+      <span class="title">会话</span>
+      <span class="cnt" id="sessCnt"></span>
+    </div>
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="sessSearch" type="text" placeholder="搜索会话 ID…" aria-label="搜索会话">
+    </div>
+    <div class="sess-list" id="sessList"></div>
+    <div class="side-foot" id="sideFoot"></div>
+  </aside>
+
+  <!-- ============ Workspace ============ -->
+  <main class="workspace" id="ws">
+    <div id="noSelect" class="empty">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.5A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z"/></svg>
+      <div class="t">选择一个会话开始管理</div>
+      <div class="d">插件会在聊天记录积累后自动学习说话风格。选中左侧任意会话，即可查看与编辑它的三层表征。</div>
+    </div>
+
+    <div id="work" style="display:none">
+      <div class="sess-head">
+        <div class="info">
+          <div class="id" id="curSid"></div>
+          <div class="sub" id="curChips"></div>
+        </div>
+        <div class="sess-actions">
+          <button class="btn sm primary" id="btnLearn">⚡ 立即学习</button>
+          <button class="btn sm" id="btnExport">⤓ 导出</button>
+          <button class="btn sm danger" id="btnClear">🗑 清空本会话</button>
+        </div>
+      </div>
+
+      <nav class="tabs" id="tabs">
+        <div class="tab active" data-tab="overview">📊 总览</div>
+        <div class="tab" data-tab="universal"><span class="bar" style="background:var(--c-universal)"></span>通用</div>
+        <div class="tab" data-tab="contextual"><span class="bar" style="background:var(--c-contextual)"></span>情境</div>
+        <div class="tab" data-tab="specific"><span class="bar" style="background:var(--c-specific)"></span>特定</div>
+      </nav>
+
+      <div id="tabOverview"></div>
+      <div id="tabLayer" style="display:none"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ Modal ============ -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3 id="mTitle">确认</h3>
+    <p id="mBody"></p>
+    <div class="acts">
+      <button class="btn ghost" id="mCancel">取消</button>
+      <button class="btn danger" id="mOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Toast ============ -->
+<div class="toast" id="toast"></div>
+
+<!-- ============ Help ============ -->
+<div class="help-ov" id="helpOv">
+  <div class="help">
+    <h2>入乡随俗 · 使用说明</h2>
+    <div class="lead">让机器人从聊天中学习并模仿他人的说话方式。</div>
+    <h4>三层表征</h4>
+    <ul>
+      <li><b style="color:var(--c-universal)">通用</b>：稳定的说话基调（语气/用词），全部注入每次回复，上限 10 条。</li>
+      <li><b style="color:var(--c-contextual)">情境</b>：场景→行为的固定反应，按 FIFO 容量管理。</li>
+      <li><b style="color:var(--c-specific)">特定</b>：群内梗与释义，含触发正则（trigger_regex）。</li>
+    </ul>
+    <h4>常用操作</h4>
+    <ul>
+      <li>编辑后点击对应层的 <code>保存本层</code> 才生效。</li>
+      <li><code>立即学习</code> 等价于聊天命令「学习总结」。</li>
+      <li><code>清空本会话</code> 等价于聊天命令「清空风格」。</li>
+      <li>快捷键：<code>/</code> 搜索 · <code>Ctrl/⌘+S</code> 保存当前层 · <code>Esc</code> 关闭弹窗。</li>
+    </ul>
+    <h4>提示</h4>
+    <ul><li>本页为设计原型预览，使用 mock 数据，不连接真实 AstrBot 后端。</li></ul>
+    <div style="margin-top:20px"><button class="btn primary" id="helpClose">知道了</button></div>
+  </div>
+</div>
+
+<script>
+/* ===================== Mock Backend (standalone preview) ===================== */
+const NOW = Date.now()/1000;
+const MOCK = {
+  universal:{
+    "group.qq.778899":[
+      {content:"语气活泼，喜欢用表情包和叠词",proficiency:60,confirmed_rounds:6},
+      {content:"爱用短句，句子结尾常带『捏』『哒』",proficiency:45,confirmed_rounds:4},
+      {content:"口头禅：绝绝子、yyds、蚌埠住了",proficiency:30,confirmed_rounds:3},
+      {content:"喜欢玩梗，对抽象文化接受度高",proficiency:25,confirmed_rounds:2}
+    ],
+    "private.wx.lily":[
+      {content:"说话温柔，常用『呀』『呢』",proficiency:50,confirmed_rounds:5},
+      {content:"喜欢用问句结尾确认对方感受",proficiency:35,confirmed_rounds:3}
+    ],
+    "group.tg.dev":[
+      {content:"技术群里偏理性，爱用术语缩写",proficiency:40,confirmed_rounds:4},
+      {content:"遇到 bug 会甩排查思路和链接",proficiency:30,confirmed_rounds:3}
+    ]
+  },
+  contextual:{
+    "group.qq.778899":[
+      {scene:"有人难过/诉苦",behavior:"发猫猫头安慰并顺着夸",_in_buffer:false},
+      {scene:"有人发成果截图",behavior:"全员刷恭喜+膜拜",_in_buffer:false},
+      {scene:"有人半夜发美食",behavior:"集体喊饿并点外卖",_in_buffer:true},
+      {scene:"有人问『在吗』",behavior:"复读『在的(狗头)』",_in_buffer:false}
+    ],
+    "private.wx.lily":[
+      {scene:"对方分享开心事",behavior:"一起开心并追问细节",_in_buffer:false}
+    ],
+    "group.tg.dev":[
+      {scene:"有人贴报错",behavior:"先问版本和环境再给方案",_in_buffer:true}
+    ]
+  },
+  specific:{
+    "group.qq.778899":[
+      {content:"awsl（啊我死了，表达被可爱到）",trigger_regex:"awsl|啊我死了",trigger_count:42},
+      {content:"蚌埠住了（绷不住了，笑/哭到失控）",trigger_regex:"蚌埠住|绷不住",trigger_count:18},
+      {content:"尊嘟假嘟（真的假的，带萌化口音）",trigger_regex:"尊嘟|假嘟",trigger_count:11},
+      {content:"绝绝子（极致的好/差，夸张赞美）",trigger_regex:"绝绝子",trigger_count:7}
+    ],
+    "private.wx.lily":[
+      {content:"摸摸（安慰/抱抱的替代说法）",trigger_regex:"摸摸|摸头",trigger_count:9}
+    ],
+    "group.tg.dev":[
+      {content:"RTFM（去读文档，略带调侃）",trigger_regex:"rtfm|读文档",trigger_count:5}
+    ]
+  }
+};
+const SESS_META = {
+  "group.qq.778899":{name:"QQ群·摸鱼咖啡馆",t:NOW-7200},
+  "private.wx.lily":{name:"微信·Lily",t:NOW-86400},
+  "group.tg.dev":{name:"Telegram·Dev 闲聊",t:NOW-3600},
+  "group.qq.empty":{name:"QQ群·新群（无数据）",t:0}
+};
+MOCK.universal["group.qq.empty"]=[]; MOCK.contextual["group.qq.empty"]=[]; MOCK.specific["group.qq.empty"]=[];
+// fake bridge
+window.AstrBotPluginPage = {
+  async ready(){},
+  async apiGet(){ await new Promise(r=>setTimeout(r,120)); return JSON.parse(JSON.stringify(MOCK)); },
+  async apiPost(){ await new Promise(r=>setTimeout(r,200)); return {status:"ok"}; }
+};
+
+/* ===================== State ===================== */
+const LAYERS=[
+  {key:"universal",name:"通用",color:"var(--c-universal)",hint:"这个会话整体说话是什么风格（语气/用词/氛围），全部注入每次回复，上限 10 条。"},
+  {key:"contextual",name:"情境",color:"var(--c-contextual)",hint:"某场景出现时的固定反应（场景 → 行为），超出容量按 FIFO 淘汰最早的。"},
+  {key:"specific",name:"特定",color:"var(--c-specific)",hint:"群内梗与释义。trigger_regex 目前仅做存储校验，未参与注入匹配。"}
+];
+const state={snapshot:null,sid:null,model:null,dirty:{},tab:"overview",filter:"",sessFilter:""};
+
+/* ===================== Helpers ===================== */
+const $=id=>document.getElementById(id);
+const clone=v=>JSON.parse(JSON.stringify(v));
+const esc=v=>v==null?"":String(v);
+function toast(msg,err){const t=$("toast");t.textContent=msg;t.className="show"+(err?" err":"");clearTimeout(t._tm);t._tm=setTimeout(()=>t.className="",2200);}
+function relTime(s){ if(!s)return "从未学习"; const d=NOW-s; if(d<60)return"刚刚"; if(d<3600)return Math.floor(d/60)+" 分钟前"; if(d<86400)return Math.floor(d/3600)+" 小时前"; return Math.floor(d/86400)+" 天前"; }
+function confirmModal(title,body){return new Promise(res=>{const ov=$("overlay");$("mTitle").textContent=title;$("mBody").textContent=body;ov.classList.add("show");const close=v=>{ov.classList.remove("show");res(v);};$("mOk").onclick=()=>close(true);$("mCancel").onclick=()=>close(false);});}
+function allSids(){const s=new Set();["universal","contextual","specific"].forEach(k=>Object.keys(state.snapshot[k]||{}).forEach(id=>s.add(id)));return[...s].sort();}
+function counts(sid){const s=state.snapshot;return{u:(s.universal[sid]||[]).length,c:(s.contextual[sid]||[]).length,p:(s.specific[sid]||[]).length};}
+function anyDirty(){return LAYERS.some(l=>state.dirty[l.key]);}
+function updateDirtyUI(){const b=$("dirtyBanner");if(anyDirty())b.classList.add("show");else b.classList.remove("show");}
+
+/* ===================== Sidebar ===================== */
+function renderSidebar(){
+  const box=$("sessList");box.textContent="";
+  const sids=allSids().filter(s=>!state.sessFilter||s.toLowerCase().includes(state.sessFilter.toLowerCase()));
+  $("sessCnt").textContent=sids.length+" 个";
+  $("sideFoot").textContent="共 "+allSids().length+" 个会话 · 总条目 "+totalEntries()+" 条";
+  if(!sids.length){box.innerHTML='<div class="empty" style="padding:24px">无匹配会话</div>';return;}
+  sids.forEach(sid=>{
+    const n=counts(sid);const meta=SESS_META[sid]||{};
+    const d=document.createElement("div");d.className="sess"+(sid===state.sid?" active":"");
+    d.innerHTML=`<span class="sid">${esc(sid)}</span>
+      <span class="mini"><i style="background:var(--c-universal)"></i><u>${n.u}</u><i style="background:var(--c-contextual)"></i><u>${n.c}</u><i style="background:var(--c-specific)"></i><u>${n.p}</u></span>
+      <span class="time">${relTime(meta.t)}</span>`;
+    d.onclick=()=>selectSession(sid);
+    box.appendChild(d);
+  });
+}
+function totalEntries(){let t=0;allSids().forEach(s=>{const n=counts(s);t+=n.u+n.c+n.p;});return t;}
+
+/* ===================== Session select ===================== */
+async function selectSession(sid,force){
+  if(sid!==state.sid&&!force&&anyDirty()){
+    if(!(await confirmModal("有未保存的修改","切换会话将丢弃当前未保存的修改，确定继续吗？")))return;
+  }
+  state.sid=sid;state.dirty={};state.filter="";state.tab="overview";
+  const s=state.snapshot;
+  state.model={universal:clone(s.universal[sid]||[]),contextual:clone(s.contextual[sid]||[]),specific:clone(s.specific[sid]||[])};
+  $("noSelect").style.display="none";$("work").style.display="";
+  $("curSid").textContent=sid+(SESS_META[sid]?"  ·  "+(SESS_META[sid].name||""):"");
+  const n=counts(sid);
+  $("curChips").innerHTML=`<span class="chip"><u style="background:var(--c-universal)"></u>通用 ${n.u}</span>
+    <span class="chip"><u style="background:var(--c-contextual)"></u>情境 ${n.c}</span>
+    <span class="chip"><u style="background:var(--c-specific)"></u>特定 ${n.p}</span>
+    <span class="chip">🕒 最近学习 ${relTime((SESS_META[sid]||{}).t)}</span>`;
+  updateDirtyUI();renderSidebar();setTab("overview");
+  $("sidebar").classList.remove("open");$("scrim").classList.remove("show");
+}
+
+/* ===================== Tabs ===================== */
+function setTab(tab){
+  state.tab=tab;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===tab));
+  $("tabOverview").style.display=tab==="overview"?"":"none";
+  $("tabLayer").style.display=tab==="overview"?"none":"";
+  if(tab==="overview")renderOverview();else renderLayer(tab);
+}
+
+/* ===================== Overview ===================== */
+function renderOverview(){
+  const sid=state.sid;const n=counts(sid);
+  const total=n.u+n.c+n.p;
+  const injectOn=true;
+  const specSorted=[...((state.snapshot.specific[sid])||[])].sort((a,b)=>(b.trigger_count||0)-(a.trigger_count||0)).slice(0,5);
+  const portrait=`在回复时，请尽量采用以下风格特点：通用风格：${(state.model.universal.map(x=>x.content)).join("；")||"（暂无）"}；`+
+    `场景反应：${(state.model.contextual.map(x=>x.scene+"→"+x.behavior)).join("；")||"（暂无）"}；`+
+    `群内流行说法：${(state.model.specific.map(x=>x.content)).join("；")||"（暂无）"}`;
+  const el=$("tabOverview");
+  el.innerHTML=`
+    <div class="stat-grid">
+      <div class="stat"><div class="n">${total}</div><div class="l">总表征条目</div></div>
+      <div class="stat u"><div class="n">${n.u}</div><div class="l">通用表征</div><div class="badge">≤10 条</div></div>
+      <div class="stat c"><div class="n">${n.c}</div><div class="l">情境表征</div><div class="badge">FIFO 容量</div></div>
+      <div class="stat s"><div class="n">${n.p}</div><div class="l">特定表征</div><div class="badge">梗+正则</div></div>
+    </div>
+    <div class="ov-2col">
+      <div class="portrait">
+        <h3>🎭 风格画像（注入预览）</h3>
+        <div class="quote">${esc(portrait)}</div>
+        <div style="margin-top:12px;font-size:12px;color:var(--c-text-3)">这是机器人回复该会话时会被追加的 System Prompt 片段。</div>
+      </div>
+      <div class="top">
+        <h3>🔥 Top 梗榜</h3>
+        ${specSorted.length?`<ol>${specSorted.map(x=>`<li>${esc(x.content)}<span class="tc">触发 ${x.trigger_count} 次</span></li>`).join("")}</ol>`:'<div class="empty" style="padding:20px">暂无特定表征</div>'}
+        <div style="font-size:12px;color:var(--c-text-3);margin-top:8px">按 trigger_count 排序</div>
+      </div>
+    </div>`;
+  if(total===0){
+    el.innerHTML=`<div class="empty">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.5A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z"/></svg>
+      <div class="t">这个会话还没有学习数据</div>
+      <div class="d">插件会在聊天记录积累后自动学习。也可以点右上角「立即学习」手动触发，或在聊天里发送「学习总结」。</div>
+      <button class="btn primary" onclick="document.getElementById('btnLearn').click()">⚡ 立即学习</button>
+    </div>`;
+  }
+}
+
+/* ===================== Layer editing ===================== */
+function renderLayer(key){
+  const L=LAYERS.find(l=>l.key===key);
+  const list=state.model[key];
+  const el=$("tabLayer");
+  const hintMap={
+    universal:`${L.hint} 编辑后内容由服务器保留 proficiency / confirmed_rounds 等学习统计。`,
+    contextual:`${L.hint} 带虚线标签的为「缓冲位」条目（最近 20%）。`,
+    specific:`${L.hint} 正则非法时该层拒绝保存并提示具体条目。`
+  };
+  el.innerHTML=`
+    <div class="panel ${state.dirty[key]?"dirty":""}" id="panel-${key}">
+      <div class="panel-head">
+        <div class="ttl"><span class="bar" style="background:${L.color}"></span>${L.name}表征</div>
+        <span class="dirty-tag"><span class="d"></span>未保存</span>
+        <span class="sp"></span>
+        <span class="meta" id="cnt-${key}">${list.length} 条</span>
+        <button class="btn sm" id="add-${key}">＋ 添加</button>
+        <button class="btn sm primary" id="save-${key}">保存本层</button>
+        <div class="hint">${hintMap[key]}</div>
+      </div>
+      <div class="panel-body">
+        <div class="layer-toolbar">
+          <div class="search2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input id="filt-${key}" type="text" placeholder="在本层内检索…" value="${esc(state.filter)}">
+          </div>
+        </div>
+        <div id="rows-${key}"></div>
+      </div>
+    </div>`;
+  $("add-"+key).onclick=()=>addRow(key);
+  $("save-"+key).onclick=()=>saveLayer(key);
+  $("filt-"+key).addEventListener("input",e=>{state.filter=e.target.value;renderRows(key);});
+  renderRows(key);
+}
+function renderRows(key){
+  const wrap=$("rows-"+key);if(!wrap)return;wrap.textContent="";
+  const list=state.model[key];
+  const q=state.filter.trim().toLowerCase();
+  const filtered=list.filter(e=>{
+    if(!q)return true;
+    if(key==="contextual")return (e.scene+" "+e.behavior).toLowerCase().includes(q);
+    if(key==="specific")return (e.content+" "+(e.trigger_regex||"")).toLowerCase().includes(q);
+    return (e.content||"").toLowerCase().includes(q);
+  });
+  if(!list.length){
+    wrap.innerHTML=`<div class="empty" style="padding:28px">
+      <div class="t">暂无条目</div>
+      <div class="d">点「＋ 添加」手动新增，或等插件自动学习。</div></div>`;
+  } else if(!filtered.length){
+    wrap.innerHTML=`<div class="empty" style="padding:20px">无匹配「${esc(state.filter)}」的条目</div>`;
+  } else {
+    filtered.forEach((entry,displayIdx)=>{
+      const realIdx=list.indexOf(entry);
+      const row=document.createElement("div");row.className="row";
+      if(key==="universal"){
+        row.innerHTML=`<input class="inp" value="${esc(entry.content)}" placeholder="风格描述，如：语气活泼、爱用短句">
+          <span class="meta" title="proficiency 熟练度 / confirmed_rounds 确认轮次">熟 ${entry.proficiency}·轮 ${entry.confirmed_rounds}</span>
+          <span class="pbar" title="熟练度 ${entry.proficiency}/100"><span style="width:${Math.min(100,entry.proficiency)}%"></span></span>`;
+        row.querySelector("input").addEventListener("input",e=>{entry.content=e.target.value;markDirty(key);});
+      } else if(key==="contextual"){
+        row.innerHTML=`<input class="inp" value="${esc(entry.scene)}" placeholder="场景，如：有人发消息">
+          <span class="arrow">→</span>
+          <input class="inp" value="${esc(entry.behavior)}" placeholder="群体反应，如：全员复读">
+          ${entry._in_buffer?'<span class="buf">缓冲</span>':''}`;
+        row.querySelectorAll("input").forEach((inp,i)=>inp.addEventListener("input",e=>{if(i===0)entry.scene=e.target.value;else entry.behavior=e.target.value;markDirty(key);}));
+      } else {
+        const invalid=entry.trigger_regex&&!safeRegex(entry.trigger_regex);
+        row.innerHTML=`<input class="inp" value="${esc(entry.content)}" placeholder="梗+释义，如：awsl（啊我死了）">
+          <input class="inp mono ${invalid?'invalid':''}" value="${esc(entry.trigger_regex)}" placeholder="触发正则，如：awsl|啊我死了">
+          <span class="meta" title="trigger_count 触发次数">触发 ${entry.trigger_count||1}</span>`;
+        const inputs=row.querySelectorAll("input");
+        inputs[0].addEventListener("input",e=>{entry.content=e.target.value;markDirty(key);});
+        inputs[1].addEventListener("input",e=>{entry.trigger_regex=e.target.value;const bad=!safeRegex(e.target.value);e.target.classList.toggle("invalid",bad);markDirty(key);});
+      }
+      const del=document.createElement("button");del.className="del";del.textContent="✕";del.title="删除此行（保存前不生效）";
+      del.onclick=()=>{list.splice(realIdx,1);markDirty(key);renderRows(key);$("cnt-"+key).textContent=list.length+" 条";};
+      row.appendChild(del);
+      wrap.appendChild(row);
+    });
+  }
+  const cnt=$("cnt-"+key);if(cnt)cnt.textContent=list.length+" 条";
+}
+function safeRegex(s){try{new RegExp(s);return true;}catch(e){return false;}}
+function addRow(key){
+  if(key==="universal")state.model.universal.push({content:"",proficiency:10,confirmed_rounds:1});
+  else if(key==="contextual")state.model.contextual.push({scene:"",behavior:"",_in_buffer:true});
+  else state.model.specific.push({content:"",trigger_regex:"",trigger_count:1});
+  markDirty(key);renderLayer(key);
+  const last=$("rows-"+key)?.lastElementChild;last&&last.querySelector("input")&&last.querySelector("input").focus();
+}
+function markDirty(key){state.dirty[key]=true;$("panel-"+key)&&$("panel-"+key).classList.add("dirty");updateDirtyUI();}
+async function saveLayer(key){
+  const btn=$("save-"+key);btn.disabled=true;const old=btn.innerHTML;btn.innerHTML='<span class="spin"></span>';
+  // client-side regex validation
+  if(key==="specific"){
+    for(let i=0;i<state.model.specific.length;i++){const e=state.model.specific[i];if(!safeRegex(e.trigger_regex)){toast(`第 ${i+1} 条正则无效，保存被拦截`,true);btn.disabled=false;btn.innerHTML=old;return;}}
+  }
+  try{ await window.AstrBotPluginPage.apiPost("layer",{sid:state.sid,layer:key,entries:state.model[key]}); }
+  catch(e){ toast("保存失败："+(e&&e.message||e),true); btn.disabled=false;btn.innerHTML=old; return; }
+  state.dirty[key]=false;$("panel-"+key)&&$("panel-"+key).classList.remove("dirty");updateDirtyUI();
+  toast("已保存 "+LAYERS.find(l=>l.key===key).name+" 层");btn.disabled=false;btn.innerHTML=old;
+  renderSidebar();
+}
+
+/* ===================== Global actions ===================== */
+async function refreshAll(){
+  if(anyDirty()&&!(await confirmModal("有未保存的修改","刷新将丢弃当前修改，确定继续吗？")))return;
+  state.model=null;loadSnapshot();
+}
+async function loadSnapshot(){
+  try{ state.snapshot=await window.AstrBotPluginPage.apiGet("snapshot"); }
+  catch(e){ toast("加载失败："+(e&&e.message||e),true); return; }
+  renderSidebar();
+  if(!state.sid||!allSids().includes(state.sid)){
+    if(allSids().length){ selectSession(allSids()[0],true); }
+    else { $("noSelect").style.display="";$("work").style.display="none"; }
+  } else { renderSidebar(); }
+}
+async function learnNow(){
+  const btn=$("btnLearn");btn.disabled=true;const o=btn.innerHTML;btn.innerHTML='<span class="spin"></span> 学习中';
+  await new Promise(r=>setTimeout(r,900));
+  toast("学习完成（原型演示）");btn.disabled=false;btn.innerHTML=o;
+}
+async function clearSession(){
+  if(!(await confirmModal("清空本会话","将删除该会话的全部通用/情境/特定表征，且不可撤销。确定吗？")))return;
+  state.model={universal:[],contextual:[],specific:[]};state.dirty={universal:true,contextual:true,specific:true};
+  // reflect immediately in preview
+  state.snapshot.universal[state.sid]=[];state.snapshot.contextual[state.sid]=[];state.snapshot.specific[state.sid]=[];
+  toast("已清空（原型演示，未真正落库）");selectSession(state.sid,true);
+}
+function exportJSON(){const data={sid:state.sid,...state.model};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=state.sid+".style.json";a.click();toast("已导出 JSON");}
+
+/* ===================== Events ===================== */
+$("btnRefresh").onclick=refreshAll;
+$("btnTheme").onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";};
+$("btnHelp").onclick=()=>$("helpOv").classList.add("show");
+$("helpClose").onclick=()=>$("helpOv").classList.remove("show");
+$("helpOv").onclick=e=>{if(e.target===$("helpOv"))$("helpOv").classList.remove("show");};
+$("btnLearn").onclick=learnNow;
+$("btnClear").onclick=clearSession;
+$("btnExport").onclick=exportJSON;
+$("hamb").onclick=()=>{$("sidebar").classList.toggle("open");$("scrim").classList.toggle("show");};
+$("scrim").onclick=()=>{$("sidebar").classList.remove("open");$("scrim").classList.remove("show");};
+$("sessSearch").addEventListener("input",e=>{state.sessFilter=e.target.value;renderSidebar();});
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>setTab(t.dataset.tab));
+$("mCancel").onclick=()=>$("overlay").classList.remove("show");
+$("overlay").onclick=e=>{if(e.target===$("overlay"))$("overlay").classList.remove("show");};
+$("saveAll2").onclick=async()=>{for(const l of LAYERS){if(state.dirty[l.key])await saveLayer(l.key);}};
+$("discardAll2").onclick=async()=>{if(await confirmModal("丢弃修改","确定丢弃所有未保存的修改？")){state.dirty={};const s=state.snapshot;state.model={universal:clone(s.universal[state.sid]||[]),contextual:clone(s.contextual[state.sid]||[]),specific:clone(s.specific[state.sid]||[])};updateDirtyUI();setTab(state.tab);}};
+document.addEventListener("keydown",e=>{
+  if(e.key==="/"&&document.activeElement.tagName!=="INPUT"){e.preventDefault();$("sessSearch").focus();}
+  if((e.ctrlKey||e.metaKey)&&e.key==="s"){e.preventDefault();if(state.sid&&state.tab!=="overview")saveLayer(state.tab);}
+  if(e.key==="Escape"){$("overlay").classList.remove("show");$("helpOv").classList.remove("show");}
+});
+
+/* ===================== Boot ===================== */
+(async()=>{ try{await window.AstrBotPluginPage.ready();}catch(e){} loadSnapshot(); })();
+</script>
+</body>
+</html>
