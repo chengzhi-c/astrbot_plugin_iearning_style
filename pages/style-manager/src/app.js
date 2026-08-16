@@ -122,7 +122,7 @@ function showWork() {
 }
 
 /* ============ Tab 路由 ============ */
-export function switchTab(tab) {
+function switchTab(tab) {
   store.tab = tab;
   document.querySelectorAll('.tab').forEach((t) => {
     const active = t.dataset.tab === tab;
@@ -178,7 +178,7 @@ async function refreshAll() {
 }
 
 /* ============ 会话级操作 ============ */
-export async function learnNow() {
+async function learnNow() {
   if (!store.sid) return;
   if (isAnyDirty()) {
     toast('请先保存或丢弃当前修改，再立即学习', 'error');
@@ -201,7 +201,7 @@ export async function learnNow() {
   }
 }
 
-export async function clearSession() {
+async function clearSession() {
   if (!store.sid) return;
   const ok = await confirmModal({
     title: '清空本会话',
@@ -222,7 +222,7 @@ export async function clearSession() {
   }
 }
 
-export async function exportSession() {
+async function exportSession() {
   if (!store.sid) return;
   if (isAnyDirty()) toast('导出的是服务器已保存版本，不包含当前未保存修改');
   try {
@@ -242,7 +242,7 @@ export async function exportSession() {
   }
 }
 
-export async function saveAll() {
+async function saveAll() {
   const sid = store.sid;
   const dirtyKeys = ['universal', 'contextual', 'specific'].filter((key) => store.dirty[key]);
   for (const key of dirtyKeys) {

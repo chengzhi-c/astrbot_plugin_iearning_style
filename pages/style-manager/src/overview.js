@@ -8,6 +8,14 @@ import { emptyState, toast } from './ui.js';
 
 const LAYER_ORDER = ['universal', 'contextual', 'specific'];
 
+export function donutSegments(n) {
+  return [
+    { key: 'universal', value: n.u },
+    { key: 'contextual', value: n.c },
+    { key: 'specific', value: n.p },
+  ].filter((segment) => segment.value > 0);
+}
+
 /** 三层分布环形图（纯 SVG，无依赖） */
 function donutHTML(n) {
   const total = n.u + n.c + n.p;
@@ -18,11 +26,7 @@ function donutHTML(n) {
       <text x="32" y="32" text-anchor="middle" dominant-baseline="central" class="donut-empty">0</text>
     </svg>`;
   }
-  const segments = [
-    { key: 'universal', value: n.u },
-    { key: 'contextual', value: n.c },
-    { key: 'specific', value: n.p },
-  ].filter((segment) => segment.value > 0);
+  const segments = donutSegments(n);
   let offset = 0;
   const arcs = segments.map((segment) => {
     const r = segment.value / total;
@@ -121,7 +125,7 @@ export function renderOverview(onLearn) {
 
   $('ovPortrait').textContent = portrait;
 
-  // 新增特性：一键复制风格画像（含降级方案）
+  // 复制预览文本；clipboard 不可用时使用浏览器原生降级路径。
   const copyBtn = $('copyPortrait');
   if (copyBtn) {
     copyBtn.addEventListener('click', async () => {

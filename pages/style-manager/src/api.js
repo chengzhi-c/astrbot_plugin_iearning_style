@@ -8,7 +8,6 @@
 let bridge = null;
 
 export function setBridge(b) { bridge = b; }
-export function getBridge() { return bridge; }
 
 async function get(path) {
   if (!bridge) throw new Error('面板桥接未初始化');
@@ -32,7 +31,7 @@ async function post(path, body) {
   }
 }
 
-const unwrap = (r) => (r && typeof r === 'object' && r.data !== undefined ? r.data : r);
+export const unwrap = (r) => (r && typeof r === 'object' && r.data !== undefined ? r.data : r);
 
 export const Api = {
   async snapshot() { return unwrap(await get('snapshot')); },

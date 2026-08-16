@@ -815,3 +815,31 @@ def test_snapshot_returns_copies_and_revisions(tmp_path):
     assert snapshot["revisions"]["universal"]["s1"] == dm.layer_revision(
         "s1", "universal"
     )
+
+
+def test_public_read_interfaces_do_not_expose_internal_layers(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [{"content": "style"}]
+    dm.contextual["s1"] = [{
+        "scene": "scene",
+        "behavior": "behavior",
+        "_in_buffer": True,
+    }]
+    dm.specific["s1"] = [{"content": "meme", "trigger_regex": "meme"}]
+
+    learning = dm.get_learning_context("s1")
+    layers = dm.get_session_layers("s1")
+    universal = dm.get_universal_for_session("s1")
+    contextual = dm.get_contextual_for_session("s1")
+    specific = dm.get_specific_for_session("s1")
+
+    learning["universal"][0]["content"] = "changed"
+    learning["contextual_buffer"][0]["scene"] = "changed"
+    layers["specific"][0]["content"] = "changed"
+    universal.clear()
+    contextual.clear()
+    specific.clear()
+
+    assert dm.universal["s1"][0]["content"] == "style"
+    assert dm.contextual["s1"][0]["scene"] == "scene"
+    assert dm.specific["s1"][0]["content"] == "meme"

@@ -1,119 +1,125 @@
-# DESIGN.md — 入乡随俗 · 功能性说明
+# DESIGN.md - 入乡随俗功能与数据不变量
 
-> 插件：`astrbot_plugin_iearning_style`（入乡随俗）
-> 本文仅描述插件提供的功能，不涉及 WebUI 实现细节。
+本文记录插件当前的功能契约、持久化不变量和失败语义。实现细节以代码为准，但不得绕过这些约束。
 
----
+## 1. 功能模型
 
-## 1. 核心功能
+插件按 `session_id` 隔离聊天历史与三层表征：
 
-让机器人从聊天中学习并模仿他人的说话方式。
-插件从聊天记录中提取**三层特征**，让机器人融入当前会话：
+| 层 | 语义 | 更新与注入 |
+|---|---|---|
+| `universal` | 稳定的语气、用词和氛围 | LLM 每轮全量重写，最多 10 条；每次回复全量注入 |
+| `contextual` | 场景到行为的固定反应 | LLM 追加，按 FIFO 容量管理；最新 20% 为缓冲位；每次回复全量注入 |
+| `specific` | 固定说法、释义与 `trigger_regex` | 按内容更新；仅匹配当前用户消息的条目注入 |
 
-| 层级 | 本质 | 注入策略 |
-|------|------|----------|
-| **通用（universal）** | 稳定的说话基调（语气/用词/氛围） | 全量注入每次回复，上限 10 条 |
-| **情境（contextual）** | 某场景出现时的固定反应（场景 → 行为） | 全量注入，按 FIFO 容量管理 |
-| **特定（specific）** | 群内梗 + 释义 + 触发正则 | **仅注入 trigger_regex 命中用户消息的条目**（按需注入，prompt 不膨胀） |
+每个会话最多保留 500 条聊天记录，分析窗口为最近 100 条。三条聊天命令保持为 `风格状态`、`学习总结` 和 `清空风格`。
 
----
+## 2. 学习事务
 
-## 2. 聊天命令
+`LearningManager.analyze_and_learn()` 返回结构化 `LearnResult`，结果码为：
 
-| 命令 | 功能 |
-|------|------|
-| `风格状态` | 查看当前会话三层表征的统计概览 |
-| `学习总结` | 手动触发当前会话的学习分析 |
-| `清空风格` | 清空当前会话所有学习到的表征 |
+- `learned`
+- `insufficient_history`
+- `no_provider`
+- `provider_error`
+- `invalid_response`
+- `busy`
 
----
+一次学习必须满足以下不变量：
 
-## 3. 自动学习机制
+1. 同一会话只能有一个进行中的学习任务，不同会话可以并发。
+2. LLM 的 `universal/contextual/specific` 必须全部通过结构校验后才能更新内存，任一层非法则三层全部不变。
+3. 有效的空 `universal` 表示清空旧通用表征，不是省略更新。
+4. 只有成功应用结果后才消费本轮分析 marker；provider 或解析失败不消费历史。
+5. 分析期间新到达的消息位于 marker 之后，必须保留给后续分析。
+6. 用户可见的学习成功必须同时满足 `LearnResult.ok` 与 `force_save()` 成功。
 
-- **自动学习**：静默监听所有聊天消息，无需手动触发；
-  每会话聊天记录保留最近 500 条（分析窗口 100 条），防止无限膨胀。
-- **LLM 分析**：每轮进行一次 LLM 调用，输出三层表征。
-- **阻止提示词膨胀**：每次分析时 LLM 重新评估通用表征，保留合适的、加入新的、淘汰过时的。
-- **特定正则触发**：特定表征带 `trigger_regex`，只有用户消息匹配时才注入，不膨胀 prompt。
-- **情境 FIFO 管理**：情境表征固定容量，超限按最早写入淘汰；最新 20% 标记为缓冲位，可配置是否按相似度合并到通用/特定。
+聊天记录和已学习内容在 LLM prompt 中被标记为不可信引用数据。注入内容也被包裹在 `<learned_style>` 中，并明确只能影响语气和表达方式，不能覆盖原有身份、安全要求或任务约束。
 
----
+## 3. DataManager 边界
 
-## 4. 风格管理页面（功能性）
+`DataManager` 是业务数据的唯一写入口，负责：
 
-内置管理页面，直接在 AstrBot 面板内打开：
-**扩展 → 插件详情 → 打开插件页面**（需要 AstrBot v4.26+，
-旧版本会自动跳过注册，不影响插件其他功能）。
+- 磁盘结构校验与损坏文件备份。
+- 学习结果的事务式应用与元数据保留。
+- WebUI 整层替换、revision 校验和容量约束。
+- specific 正则验证、匹配、命中统计与持久化。
+- dirty 集合、延迟保存、强制保存与启动恢复。
+- 旧版 `styles.json` 迁移。
 
-提供以下功能：
+三层聚合读取接口返回副本；调用方不得直接读取或修改 `universal/contextual/specific/chat_history` 内部容器。分析批次由 DataManager 通过 marker 管理消费边界。
 
-- **总览**：统计卡（总条目 / 各层数量 / 注入状态 / 各层容量）+
-  风格画像（注入预览）+ Top 梗榜
-- **三层编辑**：通用 / 情境 / 特定分页签编辑，
-  支持层内检索、实时正则校验、熟练度进度条、缓冲位标记，
-  修改后点「保存本层」生效
-- **会话级操作**：「立即学习」（等价于聊天命令「学习总结」）、
-  「清空本会话」（等价于「清空风格」）、「导出 JSON」
-- **防丢失**：未保存修改时出现顶部横幅（可保存全部/丢弃），
-  切换会话或刷新会确认
-- **体验**：明/暗双主题、移动端抽屉式侧栏、
-  快捷键（`/` 搜索 · `Ctrl/⌘+S` 保存当前层 · `Esc` 关闭弹窗）
-- 内容未变化的条目会自动保留 proficiency / trigger_count 等学习统计
+## 4. 持久化不变量
 
-> 新增的「立即学习 / 清空 / 导出 / 全局统计」依赖插件新增的 Web API；
-> 若后端为旧版本（未注册这些接口），界面会自动降级——
-> 这些按钮点击时会提示「请到聊天中发送对应命令」，
-> 不影响三层查看与编辑。
+正式数据文件名与现有字段保持不变：
 
----
+- `universal.json`
+- `contextual.json`
+- `specific.json`
+- `chat_history.json`
 
-## 5. 安全约束
+保存流程遵守以下规则：
 
-- **ReDoS 防护**：特定层 `trigger_regex` 限制正则长度 ≤200、
-  拒绝嵌套量词；注入时超长消息(>10000 字符)不匹配。
-- **XSS 防护**：用户内容经 HTML 转义后渲染，
-  portrait/Top 梗榜用 `textContent`。
-- **WebUI 输入边界**：先整体校验，任一条目非法抛 ValueError
-  不做部分写入；未变化条目保留 proficiency/trigger_count 等元数据。
+1. `_dirty` 是待保存层名的集合；任何业务变更必须标记所有受影响层，并保证至多一个延迟保存任务运行。
+2. 单层保存使用同目录临时文件，写入并 `fsync` 后通过 `os.replace()` 原子替换正式文件。
+3. 多层保存先写完整临时文件和固定格式 journal，再逐层 roll-forward；进程中断后启动恢复必须完成同一事务。
+4. 保存失败时对应层继续保留在 `_dirty` 中，`force_save()` 返回 `False`。
+5. `replace_layer()` 在保存锁内复检 revision，先写盘，成功后才发布内存状态。
+6. 旧格式迁移只有在新格式成功落盘后才备份源文件。
+7. 合法 JSON 但错误的顶层或条目结构不得直接载入；原文件备份后写回清理后的数据。
 
----
+## 5. Revision 语义
 
-## 6. 数据写入不变量
+revision 是按会话、按层、根据标准化数据计算的无状态摘要，不写入数据文件。
 
-- **不变量 1**：任何标记脏层之后，
-  必然有对应的延迟保存读取到 dirty=True 并保存。
-- **不变量 2**：任意时刻至多一个延迟保存任务（timer）；
-  保存执行时重检全部 dirty 标志，写盘期间的新变更由
-  while 兜底重检保证不丢；保存失败保留 dirty 待下次重试。
-- **不变量 3**：`DataManager.__init__` 中迁移旧格式
-  须在 load 与 dirty 清零**之后**，
-  否则迁移写入的 universal 会被空文件加载覆盖，
-  或 dirty 标志被末尾清零抹掉。
+- `/snapshot` 返回各层数据与对应 revision。
+- `/layer` 必须携带 `base_revision`。
+- revision 不一致时返回稳定错误码 `revision_conflict`，且不得修改内存或磁盘。
+- 保存成功返回服务器标准化后的 entries 与新 revision，前端以该响应更新基线。
 
----
+## 6. 正则执行约束
 
-## 7. 配置项
+WebUI、LLM 结果和磁盘加载共用同一套 specific 条目校验：
 
-| 配置 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| `llm_provider_id` | string | "" | 学习分析用的 LLM 提供商；留空用系统默认 |
-| `analysis_interval_seconds` | int | 3600 | 聊天记录分析频率（秒） |
-| `maintenance_interval_seconds` | int | 86400 | 风格维护任务频率（秒） |
-| `min_history_for_analysis` | int | 10 | 触发分析的最少消息数 |
-| `max_specific_per_session` | int | 200 | 每会话最大特定表征容量 |
-| `max_contextual_per_session` | int | 150 | 每会话最大情境表征容量 |
-| `enable_style_injection` | bool | true | 启用风格注入 |
-| `enable_contextual_merge` | bool | true | 情境缓冲合并到通用/特定；关闭则仅 FIFO 淘汰 |
-| `webui_enabled` | bool | true | 启用风格管理页面 |
+- `trigger_regex` 最大 200 字符。
+- 拒绝明显的嵌套量词。
+- 编译结果使用有界缓存。
+- 单个模式匹配最多 10ms，一次消息的全部 specific 匹配预算最多 50ms。
+- 超过 10000 字符的用户消息不执行 specific 匹配。
+- 超时或运行错误只记录 pattern 哈希，不记录完整正则或用户消息。
 
----
+命中的条目会更新 `trigger_count` 和 `last_seen`，并标记 `specific` 待保存。
 
-## 8. 测试
+## 7. WebUI 契约
 
-- 后端：`pytest tests/ -v`（31 项，覆盖边界/race/迁移/ReDoS/JSON 提取/容量/落盘/调度复用）。
-- 任何改动 DataManager 保存逻辑的 PR，必须跑
-  `test_schedule_save_no_data_loss_under_race` 回归。
+页面路径为 `pages/style-manager/index.html`，路由名固定为：
 
----
+- `snapshot`
+- `layer`
+- `stats`
+- `learn`
+- `clear`
+- `export`
 
-维护约定见 `AGENTS.md`；优化方案见 `OPTIMIZATION_PLAN_V2.md`。
+页面保留会话搜索、总览、三层编辑、保存本层、保存全部、丢弃、立即学习、清空、导出、主题和键盘操作。总览中的全量数据预览展示服务器保存的所有条目；specific 的真实注入仍取决于当前用户消息是否命中正则。
+
+未保存修改必须在应用内刷新、切换会话、学习和清空流程中被明确处理。`beforeunload` 仅作为浏览器允许范围内的补充，不作为 sandbox 环境中的硬保证。
+
+WebUI 需要 AstrBot v4.26+。缺少 `astrbot.api.web` 时只跳过页面注册，聊天侧功能继续加载。
+
+## 8. 配置失败语义
+
+间隔、历史阈值和容量必须为正整数；布尔配置必须为布尔值。非法值记录警告并回退到默认值，不得导致 DataManager 初始化失败或 Scheduler 任务退出。
+
+## 9. 验证命令
+
+```bash
+python -m pytest tests -q --cov=learning_style --cov-report=term-missing --cov-fail-under=85
+ruff check main.py learning_style tests
+python -m compileall -q main.py learning_style tests
+npm ci
+npm run test:unit
+npm run test:browser
+```
+
+后端测试通过最小 AstrBot host stubs 隔离运行时副作用；浏览器 smoke 使用官方 Plugin Page sandbox flags，并检查 page error、console error 和横向溢出。

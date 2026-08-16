@@ -40,6 +40,14 @@ class FakeDataManager:
         return self.save_result
 
 
+class RegisteringContext:
+    def __init__(self):
+        self.routes = []
+
+    def register_web_api(self, path, handler, methods, description):
+        self.routes.append((path, handler, methods, description))
+
+
 @pytest.fixture(autouse=True)
 def response_stubs(monkeypatch):
     monkeypatch.setattr(web_ui, "request", FakeRequest({"sid": "s1"}), raising=False)
@@ -178,3 +186,107 @@ def test_layer_api_maps_revision_conflict(tmp_path):
     assert response["status_code"] == 409
     assert response["body"]["data"] == {"code": "revision_conflict"}
     assert data_manager.universal["s1"][0]["content"] == "server"
+
+
+def test_registers_six_public_routes():
+    context = RegisteringContext()
+    page = web_ui.StylePage(context, FakeDataManager(), {"webui_enabled": True})
+
+    page.register()
+
+    assert [(path, methods) for path, _, methods, _ in context.routes] == [
+        (f"/{web_ui.PLUGIN_NAME}/snapshot", ["GET"]),
+        (f"/{web_ui.PLUGIN_NAME}/layer", ["POST"]),
+        (f"/{web_ui.PLUGIN_NAME}/stats", ["GET"]),
+        (f"/{web_ui.PLUGIN_NAME}/learn", ["POST"]),
+        (f"/{web_ui.PLUGIN_NAME}/clear", ["POST"]),
+        (f"/{web_ui.PLUGIN_NAME}/export", ["POST"]),
+    ]
+
+
+def test_disabled_webui_registers_no_routes():
+    context = RegisteringContext()
+    page = web_ui.StylePage(context, FakeDataManager(), {"webui_enabled": False})
+    page.register()
+    assert context.routes == []
+
+
+def test_snapshot_stats_and_export_contracts(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    data_manager.universal["s1"] = [{"content": "style"}]
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+
+    snapshot = run(page._snapshot())["body"]
+    stats = run(page._global_stats())["body"]
+    web_ui.request = FakeRequest({"sid": "s1"})
+    exported = run(page._export_session())["body"]
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["data"]["revisions"]["universal"]["s1"]
+    assert stats["data"]["total_sessions"] == 1
+    assert exported["data"]["sid"] == "s1"
+    assert exported["data"]["universal"][0]["content"] == "style"
+
+
+def test_clear_api_is_durable(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    run(_seed_styles(data_manager))
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+    web_ui.request = FakeRequest({"sid": "s1"})
+
+    response = run(page._clear_session())
+
+    assert response["body"] == {
+        "status": "ok",
+        "data": {"cleared": True},
+    }
+    reloaded = DataManager(str(tmp_path), {})
+    assert reloaded.universal["s1"] == []
+    assert reloaded.contextual["s1"] == []
+    assert reloaded.specific["s1"] == []
+
+
+async def _seed_styles(data_manager):
+    data_manager.replace_universal("s1", ["style"])
+    data_manager.add_contextual("s1", "scene", "behavior")
+    data_manager.add_or_update_specific("s1", "meme", "meme")
+    await data_manager.force_save()
+
+
+def test_learn_api_requires_manager():
+    page = web_ui.StylePage(SimpleNamespace(), FakeDataManager(), {})
+    response = run(page._learn_now())
+    assert response["body"]["status"] == "error"
+
+
+def test_clear_api_reports_save_failure():
+    data_manager = SimpleNamespace(
+        clear_session=lambda _sid: None,
+        force_save=_async_false,
+    )
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+    web_ui.request = FakeRequest({"sid": "s1"})
+
+    response = run(page._clear_session())
+
+    assert response["status_code"] == 500
+    assert response["body"]["data"] == {"code": "save_failed"}
+
+
+async def _async_false():
+    return False
+
+
+def test_layer_api_rejects_missing_revision(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+    web_ui.request = FakeRequest({
+        "sid": "s1",
+        "layer": "universal",
+        "entries": [],
+    })
+
+    response = run(page._save_layer())
+
+    assert response["body"]["status"] == "error"
+    assert "revision" in response["body"]["message"]

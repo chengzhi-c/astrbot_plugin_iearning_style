@@ -170,14 +170,15 @@ class LearningManager:
             indent=2,
         )
 
-        universal = self.data_manager.get_universal_for_session(session_id)
+        learning_context = self.data_manager.get_learning_context(session_id)
+        universal = learning_context["universal"]
         universal_list = [t["content"] for t in universal] if universal else []
         universal_str = "\n".join(
             [f"- {c}" for c in universal_list]
         ) if universal_list else "(无)"
 
         # 情境缓冲区提示
-        buffer_items = self.data_manager.get_contextual_buffer(session_id)
+        buffer_items = learning_context["contextual_buffer"]
         contextual_hint = ""
         if buffer_items:
             lines = [

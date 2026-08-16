@@ -4,6 +4,7 @@
 两处命令的拼接输出逐字符一致，作为回归护栏）。
 """
 import asyncio
+from types import SimpleNamespace
 
 from learning_style.data_manager import DataManager
 from learning_style.style_injector import StyleInjector
@@ -90,3 +91,53 @@ async def _inject_and_save(tmp_path):
     )
     assert data_manager.specific["s1"][0]["trigger_count"] == 3
     await data_manager.force_save()
+
+
+def test_should_inject_respects_flag_and_empty_data(tmp_path):
+    data_manager = DataManager(str(tmp_path), {"enable_style_injection": False})
+    injector = StyleInjector(data_manager, {})
+    assert injector.should_inject_style("s1") is False
+    assert injector.inject_style_to_prompt("s1", "base") == "base"
+
+    data_manager.enable_style_injection = True
+    assert injector.should_inject_style("s1") is False
+    data_manager.universal["s1"] = [{"content": "style"}]
+    assert injector.should_inject_style("s1") is True
+
+
+def test_injection_without_original_prompt_returns_only_safe_block(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    data_manager.universal["s1"] = [{"content": "style"}]
+    injector = StyleInjector(data_manager, {})
+
+    prompt = injector.inject_style_to_prompt("s1", "")
+
+    assert prompt.startswith("以下内容是从聊天中提取")
+    assert prompt.endswith("</learned_style>")
+
+
+def test_injection_error_falls_back_to_original_prompt():
+    data_manager = SimpleNamespace(
+        enable_style_injection=True,
+        get_injection_data=lambda *_args: (_ for _ in ()).throw(RuntimeError("bad")),
+    )
+    injector = StyleInjector(data_manager, {})
+    assert injector.inject_style_to_prompt("s1", "base") == "base"
+
+
+def test_style_summary_empty_and_sorted(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    injector = StyleInjector(data_manager, {})
+    assert injector.get_style_summary("s1")["has_styles"] is False
+
+    data_manager.universal["s1"] = [{"content": "u"}]
+    data_manager.contextual["s1"] = [{"scene": "s", "behavior": "b"}]
+    data_manager.specific["s1"] = [
+        {"content": "low", "trigger_count": 1},
+        {"content": "high", "trigger_count": 9},
+    ]
+    summary = injector.get_style_summary("s1")
+    assert summary["total_styles"] == 4
+    assert summary["universal_preview"] == ["u"]
+    assert summary["contextual_preview"] == ["s→b"]
+    assert summary["specific_preview"] == ["high", "low"]

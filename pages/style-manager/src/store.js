@@ -40,8 +40,6 @@ export const store = {
   loading: false,    // 全局加载中（骨架屏）
 };
 
-export function setSnapshot(snap) { store.snapshot = snap; }
-
 export function revisionFor(key, sid = store.sid) {
   return store.snapshot?.revisions?.[key]?.[sid] || null;
 }
@@ -83,7 +81,7 @@ export function isAnyDirty() {
 }
 
 /** 从快照重建当前会话的可编辑副本（丢弃本地未保存修改） */
-export function rebuildModel(sid) {
+function rebuildModel(sid) {
   const s = store.snapshot || {};
   store.model = {
     universal: clone((s.universal && s.universal[sid]) || []),

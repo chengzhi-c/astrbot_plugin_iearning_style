@@ -2,8 +2,6 @@
 // 无副作用、无外部依赖；与业务视图无关，可被任意模块复用。
 
 export const $ = (id) => document.getElementById(id);
-export const qs = (sel, root = document) => root.querySelector(sel);
-export const qsa = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export const clone = (v) => JSON.parse(JSON.stringify(v));
 
@@ -16,15 +14,6 @@ export function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text != null) e.textContent = text;
   return e;
-}
-
-/** 防抖：返回包装函数，ms 内只执行最后一次 */
-export function debounce(fn, ms = 200) {
-  let t = null;
-  return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
-  };
 }
 
 /** 正则合法性检查（用户输入的 trigger_regex 边界校验） */
@@ -98,9 +87,4 @@ export function toggleTheme() {
   manualTheme = true;
   applyTheme(next === 'dark');
   return next;
-}
-
-/** 当前主题名 */
-export function currentTheme() {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }

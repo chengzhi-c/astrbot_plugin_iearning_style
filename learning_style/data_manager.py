@@ -411,7 +411,7 @@ class DataManager:
         self._load_layer(self.universal_file, "universal")
 
     def get_universal_for_session(self, session_id: str) -> list[dict[str, Any]]:
-        return self.universal.get(session_id, [])
+        return copy.deepcopy(self.universal.get(session_id, []))
 
     def replace_universal(self, session_id: str, contents: list[str]):
         """
@@ -461,15 +461,21 @@ class DataManager:
         self._load_layer(self.contextual_file, "contextual")
 
     def get_contextual_for_session(self, session_id: str) -> list[dict[str, Any]]:
-        return self.contextual.get(session_id, [])
+        return copy.deepcopy(self.contextual.get(session_id, []))
 
     def get_contextual_buffer(self, session_id: str) -> list[dict[str, Any]]:
         """仅返回缓冲位中的情境表征（供维护合并用）。"""
-        return [
+        return copy.deepcopy([
             t
             for t in self.contextual.get(session_id, [])
             if t.get("_in_buffer")
-        ]
+        ])
+
+    def get_learning_context(self, session_id: str) -> dict[str, Any]:
+        return {
+            "universal": self.get_universal_for_session(session_id),
+            "contextual_buffer": self.get_contextual_buffer(session_id),
+        }
 
     def add_contextual(self, session_id: str, scene: str, behavior: str):
         """
@@ -513,13 +519,6 @@ class DataManager:
         buffer_count = max(1, int(len(traits) * CONTEXTUAL_BUFFER_RATIO))
         for i, t in enumerate(traits):
             t["_in_buffer"] = (i >= len(traits) - buffer_count)
-
-    def mark_contextual_merged(self, session_id: str, index: int):
-        """从情境列表中移除已合并的条目。"""
-        if session_id in self.contextual and 0 <= index < len(self.contextual[session_id]):
-            self.contextual[session_id].pop(index)
-            self._refresh_buffer_markers(session_id)
-            self._mark_dirty("contextual")
 
     def merge_contextual_buffer(self, session_id: str, threshold: float = 0.85):
         """
@@ -602,7 +601,14 @@ class DataManager:
         self._load_layer(self.specific_file, "specific")
 
     def get_specific_for_session(self, session_id: str) -> list[dict[str, Any]]:
-        return self.specific.get(session_id, [])
+        return copy.deepcopy(self.specific.get(session_id, []))
+
+    def get_session_layers(self, session_id: str) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "universal": self.get_universal_for_session(session_id),
+            "contextual": self.get_contextual_for_session(session_id),
+            "specific": self.get_specific_for_session(session_id),
+        }
 
     def add_or_update_specific(
         self, session_id: str, content: str, trigger_regex: str
@@ -942,6 +948,12 @@ class DataManager:
         self, session_id: str, limit: int = 50
     ) -> list[dict[str, Any]]:
         return self.chat_history.get(session_id, [])[-limit:]
+
+    def get_history_sessions(self) -> list[str]:
+        return list(self.chat_history)
+
+    def get_contextual_sessions(self) -> list[str]:
+        return list(self.contextual)
 
     def get_analysis_batch(
         self, session_id: str, limit: int = 100

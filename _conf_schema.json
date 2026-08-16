@@ -10,30 +10,35 @@
     "type": "int",
     "description": "聊天记录分析频率（秒）",
     "hint": "插件每隔多少秒对积累的聊天记录进行一次学习分析。默认值为 3600 (1小时)。",
+    "min": 1,
     "default": 3600
   },
   "maintenance_interval_seconds": {
     "type": "int",
     "description": "风格维护任务频率（秒）",
     "hint": "插件每隔多少秒进行一次表征合并和容量清理。默认值为 86400 (24小时)。",
+    "min": 1,
     "default": 86400
   },
   "min_history_for_analysis": {
     "type": "int",
     "description": "触发分析的最少消息数",
     "hint": "当一个会话的聊天记录达到此数量时，才会被纳入学习分析。默认值为 10。",
+    "min": 1,
     "default": 10
   },
   "max_specific_per_session": {
     "type": "int",
     "description": "每个会话的最大特定表征容量",
     "hint": "每个会话最多可以存储多少条特定表征。超过此上限将淘汰触发次数最低的。默认值为 200。",
+    "min": 1,
     "default": 200
   },
   "max_contextual_per_session": {
     "type": "int",
     "description": "每个会话的最大情境表征容量",
     "hint": "每个会话最多可以存储多少条情境表征。超过此上限将按 FIFO 淘汰最早的。默认值为 150。",
+    "min": 1,
     "default": 150
   },
   "enable_style_injection": {

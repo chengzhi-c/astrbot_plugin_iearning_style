@@ -15,14 +15,14 @@ function updateDirtyUI() {
   $('dirtyBanner').classList.toggle('show', Object.values(store.dirty).some(Boolean));
 }
 
-export function markDirty(key) {
+function markDirty(key) {
   store.dirty[key] = true;
   const p = $('panel-' + key);
   if (p) p.classList.add('dirty');
   updateDirtyUI();
 }
 
-export function clearDirty(key) {
+function clearDirty(key) {
   store.dirty[key] = false;
   const p = $('panel-' + key);
   if (p) p.classList.remove('dirty');
@@ -188,7 +188,7 @@ function buildRow(key, entry) {
 }
 
 /* ============ 添加 / 保存 ============ */
-export function addRow(key) {
+function addRow(key) {
   if (key === 'universal') store.model.universal.push({ content: '', proficiency: 10, confirmed_rounds: 1 });
   else if (key === 'contextual') store.model.contextual.push({ scene: '', behavior: '', _in_buffer: true });
   else store.model.specific.push({ content: '', trigger_regex: '', trigger_count: 1 });

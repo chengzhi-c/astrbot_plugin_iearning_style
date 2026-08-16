@@ -2,7 +2,18 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .style_selector import StyleSelector
+
+def _build_style_text(label: str, contents: list[str]) -> str:
+    return f"{label}：{'、'.join(contents)}" if contents else ""
+
+
+def _build_contextual_text(contextuals: list[dict[str, Any]]) -> str:
+    parts = [
+        f"{item['scene']}→{item['behavior']}"
+        for item in contextuals
+        if item.get("scene") and item.get("behavior")
+    ]
+    return f"情境提示：{'；'.join(parts)}" if parts else ""
 
 
 class StyleInjector:
@@ -15,17 +26,13 @@ class StyleInjector:
 
     def __init__(self, data_manager, config: dict[str, Any]):
         self.data_manager = data_manager
-        self.config = config
-        self.style_selector = StyleSelector()
 
     def should_inject_style(self, session_id: str) -> bool:
         if not self.data_manager.enable_style_injection:
             return False
 
-        universal = self.data_manager.get_universal_for_session(session_id)
-        contextual = self.data_manager.get_contextual_for_session(session_id)
-        specific = self.data_manager.get_specific_for_session(session_id)
-        return bool(universal) or bool(contextual) or bool(specific)
+        layers = self.data_manager.get_session_layers(session_id)
+        return any(layers.values())
 
     def inject_style_to_prompt(
         self, session_id: str, original_system_prompt: str, user_message: str = ""
@@ -44,21 +51,21 @@ class StyleInjector:
             if universal:
                 contents = [t["content"] for t in universal]
                 style_parts.append(
-                    self.style_selector.build_style_text("通用风格", contents)
+                    _build_style_text("通用风格", contents)
                 )
 
             # 2. 情境表征：全部注入
             contextual = injection["contextual"]
             if contextual:
                 style_parts.append(
-                    self.style_selector.build_contextual_text(contextual)
+                    _build_contextual_text(contextual)
                 )
 
             # 3. 特定表征：仅注入 trigger_regex 命中用户消息的条目
             hit = injection["specific"]
             if hit:
                 style_parts.append(
-                    self.style_selector.build_style_text("群内流行说法", hit)
+                    _build_style_text("群内流行说法", hit)
                 )
 
             if not style_parts:
@@ -99,9 +106,10 @@ class StyleInjector:
         return "\n".join(lines)
 
     def get_style_summary(self, session_id: str) -> dict[str, Any]:
-        universal = self.data_manager.get_universal_for_session(session_id)
-        contextual = self.data_manager.get_contextual_for_session(session_id)
-        specific = self.data_manager.get_specific_for_session(session_id)
+        layers = self.data_manager.get_session_layers(session_id)
+        universal = layers["universal"]
+        contextual = layers["contextual"]
+        specific = layers["specific"]
 
         total = len(universal) + len(contextual) + len(specific)
 

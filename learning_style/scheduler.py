@@ -69,17 +69,19 @@ class Scheduler:
         while self.is_running:
             await asyncio.sleep(self.analysis_interval)
             logger.info("开始执行周期性聊天记录分析...")
-            all_sessions = list(self.data_manager.chat_history.keys())
-            for session_id in all_sessions:
-                try:
-                    result = await self.learning_manager.analyze_and_learn(session_id)
-                    if not result.ok and result.code != "insufficient_history":
-                        logger.warning(f"周期学习跳过: {result.code}")
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    logger.error(f"分析会话 {session_id} 时出错: {e}")
-            if not await self.data_manager.force_save():
-                logger.error("周期学习结果保存失败，将在后续任务中重试。")
+            await self._perform_analysis()
+
+    async def _perform_analysis(self):
+        for session_id in self.data_manager.get_history_sessions():
+            try:
+                result = await self.learning_manager.analyze_and_learn(session_id)
+                if not result.ok and result.code != "insufficient_history":
+                    logger.warning(f"周期学习跳过: {result.code}")
+                await asyncio.sleep(0)
+            except Exception:
+                logger.exception("周期学习处理会话时出错")
+        if not await self.data_manager.force_save():
+            logger.error("周期学习结果保存失败，将在后续任务中重试。")
 
     async def _run_maintenance(self):
         while self.is_running:
@@ -90,8 +92,7 @@ class Scheduler:
 
     async def _perform_maintenance(self):
         """合并情境缓冲区到通用/特定，不处理已确认的情境。"""
-        all_sessions = list(self.data_manager.contextual.keys())
-        for session_id in all_sessions:
+        for session_id in self.data_manager.get_contextual_sessions():
             try:
                 self.data_manager.merge_contextual_buffer(session_id)
             except Exception as e:

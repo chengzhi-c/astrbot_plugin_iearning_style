@@ -1,5 +1,5 @@
 // sidebar.js — 会话侧栏视图：列表渲染、搜索过滤、统计脚注、抽屉关闭。
-// 数据只读 store；选中会话等流程由 app.js 编排，本模块通过 bus 响应刷新。
+// 数据只读 store；选中会话等流程由 app.js 编排并通过回调传入。
 
 import { store, allSids, counts } from './store.js';
 import { $, el, esc, lastActivity, relTime } from './util.js';

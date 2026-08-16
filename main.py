@@ -23,7 +23,7 @@ _LEARN_FAILURE_MESSAGES = {
     "astrbot_plugin_iearning_style",
     "qa296",
     "从聊天中学习他人说话方式。",
-    "1.1.0",
+    "1.2.0",
     "https://github.com/chengzhi-c/astrbot_plugin_iearning_style",
 )
 class IearningStylePlugin(Star):
