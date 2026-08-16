@@ -1,7 +1,5 @@
 from typing import Any
 
-import re
-
 from astrbot.api import logger
 
 from .style_selector import StyleSelector
@@ -32,14 +30,17 @@ class StyleInjector:
     def inject_style_to_prompt(
         self, session_id: str, original_system_prompt: str, user_message: str = ""
     ) -> str:
-        if not self.should_inject_style(session_id):
+        if not self.data_manager.enable_style_injection:
             return original_system_prompt
 
         try:
             style_parts = []
+            injection = self.data_manager.get_injection_data(
+                session_id, user_message
+            )
 
             # 1. 通用表征：全部注入
-            universal = self.data_manager.get_universal_for_session(session_id)
+            universal = injection["universal"]
             if universal:
                 contents = [t["content"] for t in universal]
                 style_parts.append(
@@ -47,15 +48,14 @@ class StyleInjector:
                 )
 
             # 2. 情境表征：全部注入
-            contextual = self.data_manager.get_contextual_for_session(session_id)
+            contextual = injection["contextual"]
             if contextual:
                 style_parts.append(
                     self.style_selector.build_contextual_text(contextual)
                 )
 
             # 3. 特定表征：仅注入 trigger_regex 命中用户消息的条目
-            specific = self.data_manager.get_specific_for_session(session_id)
-            hit = self._match_specific(specific, user_message)
+            hit = injection["specific"]
             if hit:
                 style_parts.append(
                     self.style_selector.build_style_text("群内流行说法", hit)
@@ -77,29 +77,6 @@ class StyleInjector:
         except Exception as e:
             logger.error(f"注入风格时发生错误: {e}")
             return original_system_prompt
-
-    @staticmethod
-    def _match_specific(specific: list[dict[str, Any]], user_message: str) -> list[str]:
-        """返回 trigger_regex 命中用户消息的特定表征 content 列表。
-
-        ReDoS 防护：超长消息（>10000 字符）不匹配，
-        避免灾难正则放大；非法正则静默跳过。
-        """
-        if not specific or not user_message:
-            return []
-        if len(user_message) > 10000:
-            return []
-        hit: list[str] = []
-        for s in specific:
-            pattern = s.get("trigger_regex", "")
-            if not pattern:
-                continue
-            try:
-                if re.search(pattern, user_message):
-                    hit.append(s["content"])
-            except re.error:
-                continue
-        return hit
 
     @staticmethod
     def format_summary_block(summary: dict[str, Any]) -> str:

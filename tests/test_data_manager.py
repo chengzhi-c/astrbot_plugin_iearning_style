@@ -11,6 +11,7 @@ import asyncio
 import copy
 import json
 import os
+import time
 
 import pytest
 
@@ -671,3 +672,63 @@ async def _add_with_invalid_capacities(dm):
     dm.add_or_update_specific("s1", "two", "two")
     await asyncio.sleep(0)
     await dm.force_save()
+
+
+# ==================== S3: bounded regex matching and hit statistics ====================
+
+def test_regex_timeout_bounds_match_time(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [{
+        "content": "pathological",
+        "trigger_regex": "(a|aa)+$",
+        "trigger_count": 1,
+        "first_seen": 1,
+        "last_seen": 1,
+    }]
+
+    started = time.perf_counter()
+    injection = dm.get_injection_data("s1", "a" * 5000 + "!")
+    elapsed = time.perf_counter() - started
+
+    assert injection["specific"] == []
+    assert elapsed < 0.25
+    assert dm.specific["s1"][0]["trigger_count"] == 1
+
+
+def test_specific_hit_updates_stats_and_persists(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [{
+        "content": "内部梗",
+        "trigger_regex": "hello",
+        "trigger_count": 4,
+        "first_seen": 1,
+        "last_seen": 1,
+    }]
+
+    run(_hit_and_save(dm))
+
+    reloaded = _new_dm(tmp_path)
+    trait = reloaded.specific["s1"][0]
+    assert trait["trigger_count"] == 5
+    assert trait["last_seen"] > 1
+
+
+async def _hit_and_save(dm):
+    injection = dm.get_injection_data("s1", "well hello there")
+    assert injection["specific"] == ["内部梗"]
+    assert "specific" in dm._dirty
+    assert await dm.force_save() is True
+
+
+def test_oversized_message_skips_specific_matching(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [{
+        "content": "梗",
+        "trigger_regex": "x",
+        "trigger_count": 1,
+    }]
+
+    injection = dm.get_injection_data("s1", "x" * 10001)
+
+    assert injection["specific"] == []
+    assert dm.specific["s1"][0]["trigger_count"] == 1

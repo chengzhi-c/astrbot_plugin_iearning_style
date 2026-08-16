@@ -14,7 +14,6 @@ Web API（前端经 window.AstrBotPluginPage 桥接调用，路由须以插件�
 
 from typing import Any
 
-import re
 import time
 
 from astrbot.api import logger
@@ -126,9 +125,11 @@ def normalize_webui_entries(
                 raise ValueError(f"第 {i + 1} 条与前面的条目重复")
             seen.add(content)
             try:
-                re.compile(regex)
-            except re.error as e:
-                raise ValueError(f"第 {i + 1} 条的 trigger_regex 无效: {e}")
+                data_manager.validate_trigger_regex(regex)
+            except ValueError as exc:
+                raise ValueError(
+                    f"第 {i + 1} 条的 trigger_regex 无效: {exc}"
+                ) from exc
             prev = old.get(content, {})
             normalized.append({
                 "content": content,

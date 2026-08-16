@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from learning_style.learning_manager import LearnResult
+from learning_style.data_manager import DataManager
 from learning_style import web_ui
 
 
@@ -123,3 +124,16 @@ def test_learn_api_reports_save_failure():
 
     assert response["body"]["status"] == "error"
     assert response["body"]["data"] == {"code": "save_failed"}
+
+
+@pytest.mark.parametrize("pattern", ["(a+)+$", "a" * 201])
+def test_webui_and_learning_share_regex_validation(tmp_path, pattern):
+    data_manager = DataManager(str(tmp_path), {})
+
+    with pytest.raises(ValueError):
+        web_ui.normalize_webui_entries(
+            data_manager,
+            "s1",
+            "specific",
+            [{"content": "bad", "trigger_regex": pattern}],
+        )

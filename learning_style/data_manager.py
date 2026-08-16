@@ -4,10 +4,12 @@ import difflib
 import hashlib
 import json
 import os
-import re
 import shutil
 import time
+from functools import lru_cache
 from typing import Any
+
+import regex
 
 from astrbot.api import logger
 
@@ -24,8 +26,17 @@ MAX_SPECIFIC_PER_SESSION = 200
 
 # 每会话聊天记录保留上限（分析窗口为最近 100 条，500 足够覆盖）
 MAX_CHAT_HISTORY_PER_SESSION = 500
+MAX_TRIGGER_PATTERN_LENGTH = 200
+MAX_MATCH_MESSAGE_LENGTH = 10000
+PER_PATTERN_TIMEOUT_SECONDS = 0.01
+TOTAL_MATCH_BUDGET_SECONDS = 0.05
 
 LAYERS = ("universal", "contextual", "specific", "chat_history")
+
+
+@lru_cache(maxsize=512)
+def _compile_trigger(pattern: str):
+    return regex.compile(pattern)
 
 
 class DataManager:
@@ -639,14 +650,75 @@ class DataManager:
     def validate_trigger_regex(trigger_regex: str) -> None:
         if not isinstance(trigger_regex, str) or not trigger_regex.strip():
             raise ValueError("trigger_regex must be a non-empty string")
-        if len(trigger_regex) > 200:
-            raise ValueError("trigger_regex exceeds 200 characters")
-        if re.search(r"\([^()]*[+*?][^()]*\)[+*?]", trigger_regex):
+        if len(trigger_regex) > MAX_TRIGGER_PATTERN_LENGTH:
+            raise ValueError(
+                f"trigger_regex exceeds {MAX_TRIGGER_PATTERN_LENGTH} characters"
+            )
+        if regex.search(r"\([^()]*[+*?][^()]*\)[+*?]", trigger_regex):
             raise ValueError("trigger_regex contains nested quantifiers")
         try:
-            re.compile(trigger_regex)
-        except re.error as exc:
+            _compile_trigger(trigger_regex)
+        except regex.error as exc:
             raise ValueError("trigger_regex is invalid") from exc
+
+    def get_injection_data(
+        self, session_id: str, user_message: str = ""
+    ) -> dict[str, Any]:
+        universal = copy.deepcopy(self.universal.get(session_id, []))
+        contextual = copy.deepcopy(self.contextual.get(session_id, []))
+        hit_contents = []
+        specific = self.specific.get(session_id, [])
+        if (
+            not specific
+            or not user_message
+            or len(user_message) > MAX_MATCH_MESSAGE_LENGTH
+        ):
+            return {
+                "universal": universal,
+                "contextual": contextual,
+                "specific": hit_contents,
+            }
+
+        deadline = time.perf_counter() + TOTAL_MATCH_BUDGET_SECONDS
+        now = time.time()
+        for trait in specific:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                logger.warning("特定表征匹配达到总时间预算，已停止后续匹配。")
+                break
+            pattern = trait.get("trigger_regex", "")
+            if not pattern:
+                continue
+            try:
+                matched = _compile_trigger(pattern).search(
+                    user_message,
+                    timeout=min(PER_PATTERN_TIMEOUT_SECONDS, remaining),
+                )
+            except TimeoutError:
+                pattern_id = hashlib.sha256(
+                    pattern.encode("utf-8")
+                ).hexdigest()[:12]
+                logger.warning(f"特定表征正则匹配超时: pattern={pattern_id}")
+                continue
+            except regex.error:
+                pattern_id = hashlib.sha256(
+                    pattern.encode("utf-8")
+                ).hexdigest()[:12]
+                logger.warning(f"特定表征正则运行失败: pattern={pattern_id}")
+                continue
+            if matched is None:
+                continue
+            hit_contents.append(trait["content"])
+            trait["trigger_count"] = trait.get("trigger_count", 0) + 1
+            trait["last_seen"] = now
+
+        if hit_contents:
+            self._mark_dirty("specific")
+        return {
+            "universal": universal,
+            "contextual": contextual,
+            "specific": hit_contents,
+        }
 
     def apply_learning_result(self, session_id: str, payload: Any) -> bool:
         """Validate and apply one LLM result without partial mutations."""
