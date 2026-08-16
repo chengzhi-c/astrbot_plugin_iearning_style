@@ -10,9 +10,7 @@ from functools import lru_cache
 from typing import Any
 
 import regex
-
 from astrbot.api import logger
-
 
 # 情境表征缓冲比例（硬编码）
 CONTEXTUAL_BUFFER_RATIO = 0.2  # 20% 为缓冲位

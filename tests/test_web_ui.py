@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from learning_style.learning_manager import LearnResult
-from learning_style.data_manager import DataManager
 from learning_style import web_ui
+from learning_style.data_manager import DataManager
+from learning_style.learning_manager import LearnResult
 
 
 def run(coro):

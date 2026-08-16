@@ -8,7 +8,6 @@ from astrbot.api.star import Star
 
 from .data_manager import DataManager
 
-
 LearnCode = Literal[
     "learned",
     "insufficient_history",

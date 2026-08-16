@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from learning_style.data_manager import DataManager
-from learning_style.learning_manager import LearnResult, LearningManager, _extract_json
+from learning_style.learning_manager import LearningManager, LearnResult, _extract_json
 
 
 def run(coro):

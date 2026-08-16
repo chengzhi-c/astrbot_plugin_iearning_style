@@ -10,7 +10,6 @@ from .learning_style.scheduler import Scheduler
 from .learning_style.style_injector import StyleInjector
 from .learning_style.web_ui import StylePage
 
-
 _LEARN_FAILURE_MESSAGES = {
     "busy": "当前会话正在学习，请稍候。",
     "no_provider": "学习分析失败：未找到可用的 LLM 提供商。",
