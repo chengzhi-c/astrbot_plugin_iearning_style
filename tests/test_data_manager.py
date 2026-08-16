@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from learning_style.data_manager import DataManager
+from learning_style.data_manager import DataManager, RevisionConflictError
 
 
 def run(coro):
@@ -154,18 +154,18 @@ async def _capacity_seq(dm):
     dm.check_specific_capacity("s1")
 
 
-# ==================== replace_layer（已归一化写入）====================
+# ==================== replace_layer（服务端归一化并持久化）====================
 
-def test_replace_layer_writes_normalized(dm):
-    normalized = [{"content": "测试", "proficiency": 50, "confirmed_rounds": 3}]
-    run(_replace_layer_seq(dm, normalized))
-    assert dm.universal["s1"] == normalized
-    assert "universal" in dm._dirty
+def test_replace_layer_normalizes_and_persists(dm):
+    run(_replace_layer_seq(dm, [{"content": "测试", "proficiency": 50}]))
+    assert dm.universal["s1"][0]["content"] == "测试"
+    assert dm.universal["s1"][0]["proficiency"] == 10
+    assert "universal" not in dm._dirty
 
 
-async def _replace_layer_seq(dm, normalized):
-    dm.replace_layer("s1", "universal", normalized)
-    await asyncio.sleep(0)
+async def _replace_layer_seq(dm, entries):
+    base_revision = dm.layer_revision("s1", "universal")
+    await dm.replace_layer("s1", "universal", entries, base_revision)
 
 
 # ==================== _schedule_save race 回归 ====================
@@ -732,3 +732,86 @@ def test_oversized_message_skips_specific_matching(tmp_path):
 
     assert injection["specific"] == []
     assert dm.specific["s1"][0]["trigger_count"] == 1
+
+
+# ==================== S4: revisioned durable layer replacement ====================
+
+def test_layer_revision_rejects_stale_save_without_mutation(tmp_path):
+    dm = _new_dm(tmp_path)
+    run(_reject_stale_layer_save(dm))
+
+
+async def _reject_stale_layer_save(dm):
+    dm.replace_universal("s1", ["server version"])
+    await dm.force_save()
+    stale_revision = dm.layer_revision("s1", "universal")
+    dm.replace_universal("s1", ["background update"])
+    await dm.force_save()
+    before = copy.deepcopy(dm.universal)
+
+    with pytest.raises(RevisionConflictError):
+        await dm.replace_layer(
+            "s1",
+            "universal",
+            [{"content": "stale edit"}],
+            stale_revision,
+        )
+
+    assert dm.universal == before
+
+
+def test_layer_write_failure_keeps_memory_and_revision(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [{"content": "old", "proficiency": 10}]
+    before = copy.deepcopy(dm.universal)
+    revision = dm.layer_revision("s1", "universal")
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dm, "_write_json_atomic", fail_write)
+
+    with pytest.raises(OSError):
+        run(dm.replace_layer(
+            "s1", "universal", [{"content": "new"}], revision
+        ))
+
+    assert dm.universal == before
+    assert dm.layer_revision("s1", "universal") == revision
+
+
+def test_layer_save_returns_normalized_entries_and_new_revision(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [{
+        "content": "梗",
+        "trigger_regex": "old",
+        "trigger_count": 7,
+        "first_seen": 1,
+        "last_seen": 2,
+    }]
+    base_revision = dm.layer_revision("s1", "specific")
+
+    result = run(dm.replace_layer(
+        "s1",
+        "specific",
+        [{"content": "梗", "trigger_regex": "new"}],
+        base_revision,
+    ))
+
+    assert result["entries"][0]["trigger_count"] == 7
+    assert result["entries"][0]["trigger_regex"] == "new"
+    assert result["revision"] == dm.layer_revision("s1", "specific")
+    assert result["revision"] != base_revision
+
+
+def test_snapshot_returns_copies_and_revisions(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [{"content": "style"}]
+
+    snapshot = dm.get_snapshot()
+    snapshot["universal"]["s1"][0]["content"] = "mutated"
+
+    assert dm.universal["s1"][0]["content"] == "style"
+    assert snapshot["revisions"]["universal"]["s1"] == dm.layer_revision(
+        "s1", "universal"
+    )

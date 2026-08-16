@@ -14,14 +14,9 @@ Web API（前端经 window.AstrBotPluginPage 桥接调用，路由须以插件�
 
 from typing import Any
 
-import time
-
 from astrbot.api import logger
 
-from .data_manager import (
-    DataManager,
-    MAX_UNIVERSAL_PER_SESSION,
-)
+from .data_manager import DataManager, RevisionConflictError
 
 PLUGIN_NAME = "astrbot_plugin_iearning_style"
 
@@ -40,106 +35,6 @@ try:
 except ImportError:
     # AstrBot < 4.26 没有 Plugin Pages / astrbot.api.web
     _SUPPORTED = False
-
-
-def _req_field(item: Any, key: str, index: int) -> str:
-    """提取并校验条目的必填字符串字段（WebUI 属网络输入边界）。"""
-    if not isinstance(item, dict):
-        raise ValueError(f"第 {index + 1} 条格式错误，应为对象")
-    value = item.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"第 {index + 1} 条缺少有效字段 {key}")
-    return value.strip()
-
-
-def normalize_webui_entries(
-    data_manager: DataManager, session_id: str, layer: str, entries: Any
-) -> list[dict[str, Any]]:
-    """校验并规范化 WebUI 提交的条目；未变化条目保留元数据。
-
-    从 DataManager 抽离以保持存储层职责单一。读取 data_manager
-    的 universal/contextual/specific 做「保留元数据」对照，
-    但不修改其状态——写入由 replace_layer 负责。
-    """
-    if not isinstance(entries, list):
-        raise ValueError("请求体必须是条目数组")
-    now = time.time()
-    normalized: list[dict[str, Any]] = []
-    seen: set = set()
-
-    if layer == "universal":
-        if len(entries) > MAX_UNIVERSAL_PER_SESSION:
-            raise ValueError(
-                f"条目数 {len(entries)} 超过通用表征容量上限 "
-                f"{MAX_UNIVERSAL_PER_SESSION}"
-            )
-        old = {t["content"]: t for t in data_manager.universal.get(session_id, [])}
-        for i, item in enumerate(entries):
-            content = _req_field(item, "content", i)
-            if content in seen:
-                raise ValueError(f"第 {i + 1} 条与前面的条目重复")
-            seen.add(content)
-            prev = old.get(content, {})
-            normalized.append({
-                "content": content,
-                "proficiency": prev.get("proficiency", 10),
-                "confirmed_rounds": prev.get("confirmed_rounds", 1),
-                "last_updated": prev.get("last_updated", now),
-            })
-
-    elif layer == "contextual":
-        max_ctx = data_manager.max_contextual_per_session
-        if len(entries) > max_ctx:
-            raise ValueError(
-                f"条目数 {len(entries)} 超过情境表征容量上限 {max_ctx}"
-            )
-        old = {
-            (t["scene"], t["behavior"]): t
-            for t in data_manager.contextual.get(session_id, [])
-        }
-        for i, item in enumerate(entries):
-            scene = _req_field(item, "scene", i)
-            behavior = _req_field(item, "behavior", i)
-            key = (scene, behavior)
-            if key in seen:
-                raise ValueError(f"第 {i + 1} 条与前面的条目重复")
-            seen.add(key)
-            prev = old.get(key, {})
-            normalized.append({
-                "scene": scene,
-                "behavior": behavior,
-                "created_at": prev.get("created_at", now),
-            })
-
-    else:  # specific
-        max_specific = data_manager.max_specific_per_session
-        if len(entries) > max_specific:
-            raise ValueError(
-                f"条目数 {len(entries)} 超过特定表征容量上限 {max_specific}"
-            )
-        old = {t["content"]: t for t in data_manager.specific.get(session_id, [])}
-        for i, item in enumerate(entries):
-            content = _req_field(item, "content", i)
-            regex = _req_field(item, "trigger_regex", i)
-            if content in seen:
-                raise ValueError(f"第 {i + 1} 条与前面的条目重复")
-            seen.add(content)
-            try:
-                data_manager.validate_trigger_regex(regex)
-            except ValueError as exc:
-                raise ValueError(
-                    f"第 {i + 1} 条的 trigger_regex 无效: {exc}"
-                ) from exc
-            prev = old.get(content, {})
-            normalized.append({
-                "content": content,
-                "trigger_regex": regex,
-                "trigger_count": prev.get("trigger_count", 1),
-                "first_seen": prev.get("first_seen", now),
-                "last_seen": prev.get("last_seen", now),
-            })
-
-    return normalized
 
 
 class StylePage:
@@ -225,20 +120,38 @@ class StylePage:
             return error_response("缺少会话 ID")
         if layer not in ("universal", "contextual", "specific"):
             return error_response(f"未知的表征层: {layer}")
+        base_revision = payload.get("base_revision")
+        if not isinstance(base_revision, str) or not base_revision:
+            return error_response("缺少基础 revision")
         try:
-            normalized = normalize_webui_entries(
-                self.data_manager, sid.strip(), layer, payload.get("entries")
+            result = await self.data_manager.replace_layer(
+                sid.strip(),
+                layer,
+                payload.get("entries"),
+                base_revision,
             )
-            self.data_manager.replace_layer(sid.strip(), layer, normalized)
+        except RevisionConflictError:
+            return error_response(
+                "revision_conflict: 服务器数据已更新，请刷新后重新合并",
+                status_code=409,
+                data={"code": "revision_conflict"},
+            )
         except ValueError as e:
             return error_response(str(e))
-        if not await self.data_manager.force_save():
+        except OSError:
             return error_response(
-                "数据已更新，但保存失败；系统会自动重试",
+                "保存失败，服务器数据未修改",
                 status_code=500,
                 data={"code": "save_failed"},
             )
-        return json_response({"status": "ok", "data": {"saved": True}})
+        return json_response({
+            "status": "ok",
+            "data": {
+                "saved": True,
+                "entries": result["entries"],
+                "revision": result["revision"],
+            },
+        })
 
     @staticmethod
     def _sid_of(payload: Any) -> str | None:

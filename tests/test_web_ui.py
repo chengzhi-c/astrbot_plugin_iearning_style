@@ -129,11 +129,52 @@ def test_learn_api_reports_save_failure():
 @pytest.mark.parametrize("pattern", ["(a+)+$", "a" * 201])
 def test_webui_and_learning_share_regex_validation(tmp_path, pattern):
     data_manager = DataManager(str(tmp_path), {})
+    base_revision = data_manager.layer_revision("s1", "specific")
+    web_ui.request = FakeRequest({
+        "sid": "s1",
+        "layer": "specific",
+        "entries": [{"content": "bad", "trigger_regex": pattern}],
+        "base_revision": base_revision,
+    })
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
 
-    with pytest.raises(ValueError):
-        web_ui.normalize_webui_entries(
-            data_manager,
-            "s1",
-            "specific",
-            [{"content": "bad", "trigger_regex": pattern}],
-        )
+    response = run(page._save_layer())
+
+    assert response["body"]["status"] == "error"
+
+
+def test_layer_api_returns_entries_and_revision(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    base_revision = data_manager.layer_revision("s1", "universal")
+    web_ui.request = FakeRequest({
+        "sid": "s1",
+        "layer": "universal",
+        "entries": [{"content": "style"}],
+        "base_revision": base_revision,
+    })
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+
+    response = run(page._save_layer())
+
+    assert response["body"]["status"] == "ok"
+    assert response["body"]["data"]["entries"][0]["content"] == "style"
+    assert response["body"]["data"]["revision"] != base_revision
+
+
+def test_layer_api_maps_revision_conflict(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    stale_revision = data_manager.layer_revision("s1", "universal")
+    data_manager.universal["s1"] = [{"content": "server"}]
+    web_ui.request = FakeRequest({
+        "sid": "s1",
+        "layer": "universal",
+        "entries": [{"content": "stale"}],
+        "base_revision": stale_revision,
+    })
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+
+    response = run(page._save_layer())
+
+    assert response["status_code"] == 409
+    assert response["body"]["data"] == {"code": "revision_conflict"}
+    assert data_manager.universal["s1"][0]["content"] == "server"

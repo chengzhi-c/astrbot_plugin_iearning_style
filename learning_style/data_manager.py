@@ -39,6 +39,10 @@ def _compile_trigger(pattern: str):
     return regex.compile(pattern)
 
 
+class RevisionConflictError(ValueError):
+    pass
+
+
 class DataManager:
     """
     三层表征管理：
@@ -964,12 +968,32 @@ class DataManager:
 
     # ==================== WebUI 管理 ====================
 
-    def get_snapshot(self) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    def layer_revision(self, session_id: str, layer: str) -> str:
+        if layer not in ("universal", "contextual", "specific"):
+            raise ValueError(f"unknown layer: {layer}")
+        entries = getattr(self, layer).get(session_id, [])
+        canonical = json.dumps(
+            entries,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def get_snapshot(self) -> dict[str, Any]:
         """返回三层表征的实时快照（供 WebUI 展示）。"""
+        sids = set(self.universal) | set(self.contextual) | set(self.specific)
         return {
-            "universal": self.universal,
-            "contextual": self.contextual,
-            "specific": self.specific,
+            "universal": copy.deepcopy(self.universal),
+            "contextual": copy.deepcopy(self.contextual),
+            "specific": copy.deepcopy(self.specific),
+            "revisions": {
+                layer: {
+                    session_id: self.layer_revision(session_id, layer)
+                    for session_id in sids
+                }
+                for layer in ("universal", "contextual", "specific")
+            },
         }
 
     def global_stats(self) -> dict[str, Any]:
@@ -1018,19 +1042,120 @@ class DataManager:
             "specific": self.get_specific_for_session(session_id),
         }
 
-    def replace_layer(self, session_id: str, layer: str, normalized: list[dict[str, Any]]):
-        """整层替换某会话的表征（供 WebUI 保存）。
+    @staticmethod
+    def _required_field(item: Any, key: str, index: int) -> str:
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {index + 1} 条格式错误，应为对象")
+        value = item.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"第 {index + 1} 条缺少有效字段 {key}")
+        return value.strip()
 
-        调用方（web_ui.normalize_webui_entries）已完成校验与元数据保留，
-        本方法仅做写入与脏标记。
-        """
+    def _normalize_layer_replacement(
+        self, session_id: str, layer: str, entries: Any
+    ) -> list[dict[str, Any]]:
+        if layer not in ("universal", "contextual", "specific"):
+            raise ValueError(f"未知的表征层: {layer}")
+        if not isinstance(entries, list):
+            raise ValueError("请求体必须是条目数组")
+
+        now = time.time()
+        normalized = []
+        seen = set()
+        current = getattr(self, layer).get(session_id, [])
         if layer == "universal":
-            self.universal[session_id] = normalized
-            self._mark_dirty("universal")
-        elif layer == "contextual":
-            self.contextual[session_id] = normalized
-            self._refresh_buffer_markers(session_id)
-            self._mark_dirty("contextual")
-        else:
-            self.specific[session_id] = normalized
-            self._mark_dirty("specific")
+            if len(entries) > MAX_UNIVERSAL_PER_SESSION:
+                raise ValueError(
+                    f"条目数 {len(entries)} 超过通用表征容量上限 "
+                    f"{MAX_UNIVERSAL_PER_SESSION}"
+                )
+            old = {item["content"]: item for item in current}
+            for index, item in enumerate(entries):
+                content = self._required_field(item, "content", index)
+                if content in seen:
+                    raise ValueError(f"第 {index + 1} 条与前面的条目重复")
+                seen.add(content)
+                previous = old.get(content, {})
+                normalized.append({
+                    "content": content,
+                    "proficiency": previous.get("proficiency", 10),
+                    "confirmed_rounds": previous.get("confirmed_rounds", 1),
+                    "last_updated": previous.get("last_updated", now),
+                })
+            return normalized
+
+        if layer == "contextual":
+            if len(entries) > self.max_contextual_per_session:
+                raise ValueError(
+                    f"条目数 {len(entries)} 超过情境表征容量上限 "
+                    f"{self.max_contextual_per_session}"
+                )
+            old = {
+                (item["scene"], item["behavior"]): item for item in current
+            }
+            for index, item in enumerate(entries):
+                scene = self._required_field(item, "scene", index)
+                behavior = self._required_field(item, "behavior", index)
+                key = (scene, behavior)
+                if key in seen:
+                    raise ValueError(f"第 {index + 1} 条与前面的条目重复")
+                seen.add(key)
+                previous = old.get(key, {})
+                normalized.append({
+                    "scene": scene,
+                    "behavior": behavior,
+                    "created_at": previous.get("created_at", now),
+                })
+            self._set_buffer_markers(normalized)
+            return normalized
+
+        if len(entries) > self.max_specific_per_session:
+            raise ValueError(
+                f"条目数 {len(entries)} 超过特定表征容量上限 "
+                f"{self.max_specific_per_session}"
+            )
+        old = {item["content"]: item for item in current}
+        for index, item in enumerate(entries):
+            content = self._required_field(item, "content", index)
+            trigger_regex = self._required_field(item, "trigger_regex", index)
+            if content in seen:
+                raise ValueError(f"第 {index + 1} 条与前面的条目重复")
+            seen.add(content)
+            self.validate_trigger_regex(trigger_regex)
+            previous = old.get(content, {})
+            normalized.append({
+                "content": content,
+                "trigger_regex": trigger_regex,
+                "trigger_count": previous.get("trigger_count", 1),
+                "first_seen": previous.get("first_seen", now),
+                "last_seen": previous.get("last_seen", now),
+            })
+        return normalized
+
+    async def replace_layer(
+        self,
+        session_id: str,
+        layer: str,
+        entries: Any,
+        base_revision: str,
+    ) -> dict[str, Any]:
+        if layer not in ("universal", "contextual", "specific"):
+            raise ValueError(f"未知的表征层: {layer}")
+        async with self._save_lock:
+            if not self._recover_save_transaction():
+                raise OSError("存在无法恢复的保存事务")
+            if base_revision != self.layer_revision(session_id, layer):
+                raise RevisionConflictError("revision_conflict")
+
+            normalized = self._normalize_layer_replacement(
+                session_id, layer, entries
+            )
+            updated_store = copy.deepcopy(getattr(self, layer))
+            updated_store[session_id] = normalized
+            self._write_json_atomic(self._layer_files[layer], updated_store)
+            setattr(self, layer, updated_store)
+            self._dirty.discard(layer)
+            return {
+                "entries": copy.deepcopy(normalized),
+                "revision": self.layer_revision(session_id, layer),
+            }

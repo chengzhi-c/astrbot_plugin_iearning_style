@@ -1,6 +1,9 @@
-// api.js — 对 window.AstrBotPluginPage 桥接的封装。
-// 所有方法基于插件名前缀的路由：snapshot / stats / layer / learn / clear / export。
-// 桥接返回结构可能是 {status, data} 包裹，也可能是直接数据，统一在此处解包。
+// api.js — 对 window.AstrBotPluginPage 桥接的封装（API 契约层）。
+// 路由与后端 web_ui.py 保持一致（以插件名前缀开头）：
+//   GET  snapshot / stats
+//   POST layer / learn / clear / export
+// 桥接返回结构可能是 {status, data} 包裹，也可能是直接数据，统一在此解包。
+// ⚠️ 此文件是前后端衔接的契约边界，修改路由/字段需同步后端。
 
 let bridge = null;
 
@@ -13,7 +16,20 @@ async function get(path) {
 }
 async function post(path, body) {
   if (!bridge) throw new Error('面板桥接未初始化');
-  return bridge.apiPost(path, body);
+  try {
+    const result = await bridge.apiPost(path, body);
+    if (result?.status === 'error') {
+      const error = new Error(result.message || '请求失败');
+      error.code = result.data?.code || 'request_failed';
+      throw error;
+    }
+    return result;
+  } catch (error) {
+    if (!error.code && String(error.message || error).includes('revision_conflict')) {
+      error.code = 'revision_conflict';
+    }
+    throw error;
+  }
 }
 
 const unwrap = (r) => (r && typeof r === 'object' && r.data !== undefined ? r.data : r);
@@ -21,7 +37,11 @@ const unwrap = (r) => (r && typeof r === 'object' && r.data !== undefined ? r.da
 export const Api = {
   async snapshot() { return unwrap(await get('snapshot')); },
   async stats() { return unwrap(await get('stats')); },
-  async saveLayer(sid, layer, entries) { return post('layer', { sid, layer, entries }); },
+  async saveLayer(sid, layer, entries, baseRevision) {
+    return unwrap(await post('layer', {
+      sid, layer, entries, base_revision: baseRevision,
+    }));
+  },
   async learn(sid) { return post('learn', { sid }); },
   async clear(sid) { return post('clear', { sid }); },
   // 导出返回原始结果（可能为包裹结构），由调用方二次解包。
