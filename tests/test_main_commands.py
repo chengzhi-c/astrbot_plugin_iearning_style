@@ -1,6 +1,7 @@
 """Chat command behavior tests."""
 
 import asyncio
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,11 +10,14 @@ import pytest
 
 from learning_style.learning_manager import LearnResult
 
-PROJECT_PARENT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_PARENT = PROJECT_ROOT.parent
 if str(PROJECT_PARENT) not in sys.path:
     sys.path.insert(0, str(PROJECT_PARENT))
 
-from astrbot_plugin_iearning_style_czc.main import IearningStylePlugin  # noqa: E402
+IearningStylePlugin = importlib.import_module(
+    f"{PROJECT_ROOT.name}.main"
+).IearningStylePlugin
 
 
 class FakeEvent:
