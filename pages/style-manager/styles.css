@@ -6,7 +6,7 @@
       全部走 CSS 变量，明暗主题只切换变量，不重写组件。
    2. 组件化：btn / input / panel / card / stat / tab / toast / modal /
       empty / skeleton 各自独立成节，互不耦合。
-   3. 无障碍：4.5:1 对比度、focus-visible、aria、reduced-motion。
+   3. 无障碍：正文与辅助小字对比度、focus-visible、aria、reduced-motion。
    4. 零外部依赖：仅系统字体，可在 AstrBot Dashboard 沙箱 iframe 运行。
    5. 视觉语言统一：品牌紫 + 三层语义色（靛蓝/青绿/琥珀）贯穿全站。
    ===================================================================== */
@@ -28,6 +28,7 @@
   /* 语义色 */
   --c-success: #15A34A;
   --c-warning: #D97706;
+  --c-banner: #92400E;
   --c-danger: #DC2626;
   --c-danger-soft: #FDE8E8;
   --c-info: #2563EB;
@@ -43,7 +44,7 @@
   /* 文本（明） */
   --c-text: #181B22;
   --c-text-2: #586071;
-  --c-text-3: #8B93A1;
+  --c-text-3: #667085;
 
   /* 阴影 */
   --sh-1: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
@@ -86,6 +87,7 @@ html[data-theme="dark"] {
 
   --c-success: #4ADE80;
   --c-warning: #FBBF24;
+  --c-banner: #78350F;
   --c-danger: #F87171;
   --c-danger-soft: rgba(239, 68, 68, .18);
   --c-info: #60A5FA;
@@ -99,7 +101,7 @@ html[data-theme="dark"] {
 
   --c-text: #ECEEF3;
   --c-text-2: #A6AEBB;
-  --c-text-3: #6E7685;
+  --c-text-3: #98A2B3;
 
   --sh-1: 0 1px 2px rgba(0, 0, 0, .4);
   --sh-2: 0 6px 16px rgba(0, 0, 0, .5);
@@ -111,6 +113,7 @@ html[data-theme="dark"] {
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
+  display: flex; flex-direction: column; overflow: hidden;
   font: 14px/1.55 var(--font);
   background: var(--c-bg);
   color: var(--c-text);
@@ -131,6 +134,7 @@ a:hover { text-decoration: underline; }
 
 /* ---------- 3. App Bar（玻璃质感） ---------- */
 .appbar {
+  flex: none;
   position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; gap: var(--s-3);
   padding: 0 var(--s-4);
@@ -187,9 +191,10 @@ a:hover { text-decoration: underline; }
 
 /* ---------- 4. Dirty Banner ---------- */
 .banner {
+  flex: none;
   display: none; align-items: center; gap: 10px;
   padding: 9px var(--s-4); z-index: 25;
-  background: linear-gradient(90deg, var(--c-warning), color-mix(in srgb, var(--c-warning) 82%, #000));
+  background: var(--c-banner);
   color: #fff;
   font-size: 13px; box-shadow: var(--sh-1);
 }
@@ -199,11 +204,11 @@ a:hover { text-decoration: underline; }
 .banner .sp { flex: 1; }
 .banner .btn { border-color: rgba(255,255,255,.4); background: transparent; color: #fff; }
 .banner .btn:hover { background: rgba(255,255,255,.16); }
-.banner .btn.primary { background: #fff; border-color: #fff; color: var(--c-warning); font-weight: 600; }
+.banner .btn.primary { background: #fff; border-color: #fff; color: #7C2D12; font-weight: 600; }
 .banner .btn.primary:hover { filter: brightness(.96); }
 
 /* ---------- 5. Layout Shell ---------- */
-.shell { display: flex; height: calc(100vh - var(--appbar-h)); }
+.shell { display: flex; flex: 1; min-height: 0; }
 .sidebar {
   width: var(--sidebar-w); flex: none;
   background: var(--c-surface);
@@ -230,12 +235,14 @@ a:hover { text-decoration: underline; }
 
 .sess-list { flex: 1; overflow-y: auto; padding: 0 var(--s-2) var(--s-3); }
 .sess {
+  width: 100%; text-align: left; font: inherit; color: inherit; background: transparent;
   display: flex; align-items: center; gap: 9px;
   padding: 10px 11px; border-radius: var(--r-1); cursor: pointer;
   margin-bottom: 2px; border: 1px solid transparent;
   transition: background var(--t-fast), border-color var(--t-fast);
 }
 .sess:hover { background: var(--c-surface-2); }
+.sess:focus-visible { outline: 2px solid var(--c-primary); outline-offset: -2px; }
 .sess.active {
   background: var(--c-primary-50); border-color: color-mix(in srgb, var(--c-primary) 24%, transparent);
   box-shadow: inset 3px 0 0 var(--c-primary);
@@ -290,6 +297,7 @@ a:hover { text-decoration: underline; }
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
+  border: 0; background: transparent; font: inherit;
   flex: none; padding: 11px 15px; cursor: pointer; color: var(--c-text-2);
   font-weight: 500; font-size: 13.5px; position: relative;
   border-bottom: 2px solid transparent; white-space: nowrap;
@@ -542,11 +550,12 @@ a:hover { text-decoration: underline; }
 
 /* ---------- 12. Modal ---------- */
 .overlay {
-  position: fixed; inset: 0; background: rgba(10, 12, 16, .5);
+  position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none;
+  margin: 0; padding: 0; border: 0; background: transparent;
   display: none; align-items: center; justify-content: center; z-index: 50;
-  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
 }
-.overlay.show { display: flex; animation: fade-in var(--t) var(--ease-out); }
+.overlay[open] { display: flex; animation: fade-in var(--t) var(--ease-out); }
+.overlay::backdrop { background: rgba(10, 12, 16, .5); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .modal {
   background: var(--c-surface); color: var(--c-text);
   border-radius: var(--r-3); padding: var(--s-6);
@@ -593,11 +602,12 @@ a:hover { text-decoration: underline; }
 
 /* ---------- 14. Help Drawer ---------- */
 .help-ov {
-  position: fixed; inset: 0; background: rgba(10, 12, 16, .46);
+  position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none;
+  margin: 0; padding: 0; border: 0; background: transparent;
   display: none; z-index: 55; justify-content: flex-end;
-  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
 }
-.help-ov.show { display: flex; }
+.help-ov[open] { display: flex; }
+.help-ov::backdrop { background: rgba(10, 12, 16, .46); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .help-panel {
   width: min(440px, 94vw); height: 100%; background: var(--c-surface);
   border-left: 1px solid var(--c-border);
@@ -641,13 +651,13 @@ a:hover { text-decoration: underline; }
   .hamburger { display: grid; }
   .shell { position: relative; }
   .sidebar {
-    position: fixed; top: var(--appbar-h); bottom: 0; left: 0; z-index: 40;
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: 40;
     width: min(320px, 86vw);
     transform: translateX(-102%); transition: transform var(--t) var(--ease-out);
     box-shadow: var(--sh-3);
   }
   .sidebar.open { transform: translateX(0); }
-  .scrim { position: fixed; inset: var(--appbar-h) 0 0; background: rgba(10, 12, 16, .45); z-index: 35; display: none; }
+  .scrim { position: absolute; inset: 0; background: rgba(10, 12, 16, .45); z-index: 35; display: none; }
   .scrim.show { display: block; }
   .workspace { padding: var(--s-4); }
   .sess-head { margin-bottom: var(--s-4); }
@@ -657,6 +667,8 @@ a:hover { text-decoration: underline; }
   .row .arrow { display: none; }
   .row .meta, .row .buf, .row .pbar { flex: none; }
   .row .del { opacity: 1; }
+  .icon-btn, .row .del { min-width: 40px; min-height: 40px; }
+  .mini-btn { min-height: 40px; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .stat.total { flex-direction: column; text-align: center; }
   .banner { flex-wrap: wrap; }
@@ -664,6 +676,7 @@ a:hover { text-decoration: underline; }
   .sk-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
+  .tab { flex: 1; min-width: 0; justify-content: center; padding: 10px 6px; }
   .stat-grid { grid-template-columns: 1fr; }
   .status-pill { display: none; }
   .brand-text h1 { font-size: 14px; }

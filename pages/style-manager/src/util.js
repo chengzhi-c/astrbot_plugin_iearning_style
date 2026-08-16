@@ -64,26 +64,39 @@ export function lastActivity(sid, snapshot) {
   return max;
 }
 
-/* ============ 主题（明/暗，localStorage 持久化 + 系统偏好兜底） ============ */
-const THEME_KEY = 'ils-theme';
+/* ============ 主题（宿主 context 优先，系统偏好兜底） ============ */
+let manualTheme = false;
+let themeListener = null;
 
-export function initTheme() {
+function applyTheme(dark) {
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  themeListener?.(document.documentElement.dataset.theme);
+}
+
+export async function initTheme(bridge = null, onChange = null) {
   const root = document.documentElement;
-  const saved = localStorage.getItem(THEME_KEY);
-  if (saved === 'light' || saved === 'dark') {
-    root.dataset.theme = saved;
-  } else if (!root.dataset.theme) {
-    const prefersDark = window.matchMedia &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = prefersDark ? 'dark' : 'light';
+  manualTheme = false;
+  themeListener = onChange;
+  let context = null;
+  try { context = await bridge?.getContext?.(); } catch { context = null; }
+  if (typeof context?.isDark === 'boolean') applyTheme(context.isDark);
+  else {
+    const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    applyTheme(Boolean(prefersDark));
   }
+  if (bridge?.onContext) {
+    bridge.onContext((next) => {
+      if (!manualTheme && typeof next?.isDark === 'boolean') applyTheme(next.isDark);
+    });
+  }
+  return root.dataset.theme;
 }
 
 export function toggleTheme() {
   const root = document.documentElement;
   const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
-  root.dataset.theme = next;
-  localStorage.setItem(THEME_KEY, next);
+  manualTheme = true;
+  applyTheme(next === 'dark');
   return next;
 }
 

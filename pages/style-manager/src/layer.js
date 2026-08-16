@@ -7,7 +7,6 @@ import { Api } from './api.js';
 import { $, el, esc, safeRegex } from './util.js';
 import { icon } from './icons.js';
 import { toast, emptyState } from './ui.js';
-import { bus } from './bus.js';
 
 const HINTS = Object.fromEntries(LAYERS.map((l) => [l.key, l.hint]));
 
@@ -37,7 +36,7 @@ export function clearAllDirty() {
 }
 
 /* ============ 层面板渲染 ============ */
-export function renderLayer(key) {
+export function renderLayer(key, onSaved) {
   const L = LAYERS.find((l) => l.key === key);
   const list = store.model[key];
   const cap = (store.caps && store.caps[key]) ?? ({ universal: 10, contextual: 150, specific: 200 })[key];
@@ -71,7 +70,7 @@ export function renderLayer(key) {
       </div>
     </div>`;
   $('add-' + key).onclick = () => addRow(key);
-  $('save-' + key).onclick = () => saveLayer(key);
+  $('save-' + key).onclick = () => saveLayer(key, { onSaved });
   $('filt-' + key).addEventListener('input', (e) => {
     store.layerFilter = e.target.value;
     renderRows(key);
@@ -228,7 +227,7 @@ export function validateLayer(key) {
   return { ok: true };
 }
 
-export async function saveLayer(key, { quiet = false } = {}) {
+export async function saveLayer(key, { quiet = false, onSaved } = {}) {
   if (!store.sid) return { ok: false, code: 'no_session' };
   if (!store.dirty[key]) return { ok: true, code: 'clean' };
   const sid = store.sid;
@@ -268,6 +267,6 @@ export async function saveLayer(key, { quiet = false } = {}) {
   if (!quiet) toast(`已保存${LAYERS.find((l) => l.key === key).name}层`);
   if (btn) { btn.disabled = false; btn.innerHTML = old; }
   if (currentSession) renderRows(key);
-  bus.emit('data-changed');
+  onSaved?.();
   return { ok: true, code: 'saved' };
 }

@@ -1,11 +1,9 @@
 // sidebar.js — 会话侧栏视图：列表渲染、搜索过滤、统计脚注、抽屉关闭。
 // 数据只读 store；选中会话等流程由 app.js 编排，本模块通过 bus 响应刷新。
 
-import { store, allSids, counts, isAnyDirty } from './store.js';
+import { store, allSids, counts } from './store.js';
 import { $, el, esc, lastActivity, relTime } from './util.js';
 import { icon } from './icons.js';
-import { confirmModal } from './ui.js';
-import { bus } from './bus.js';
 
 function totalEntries() {
   let t = 0;
@@ -13,7 +11,7 @@ function totalEntries() {
   return t;
 }
 
-export function renderSidebar() {
+export function renderSidebar(onSelect) {
   const box = $('sessList');
   if (!box) return;
   box.textContent = '';
@@ -32,8 +30,8 @@ export function renderSidebar() {
   sids.forEach((sid) => {
     const n = counts(sid);
     const active = sid === store.sid;
-    const d = el('div', 'sess' + (active ? ' active' : ''));
-    d.setAttribute('role', 'listitem');
+    const d = el('button', 'sess' + (active ? ' active' : ''));
+    d.type = 'button';
     d.setAttribute('aria-current', active ? 'true' : 'false');
     d.innerHTML = `
       <span class="sid-dot" style="background:${active ? 'var(--c-primary)' : 'var(--c-text-3)'}"></span>
@@ -46,7 +44,7 @@ export function renderSidebar() {
         </span>
         <span class="sess-time" title="最近活动">${relTime(lastActivity(sid, store.snapshot))}</span>
       </span>`;
-    d.addEventListener('click', () => selectSessionById(sid));
+    d.addEventListener('click', () => onSelect?.(sid));
     box.appendChild(d);
   });
 }
@@ -61,20 +59,9 @@ function renderSideFoot() {
       <span class="sf-item">注入 ${store.injectOn ? '开' : '关'}</span>` : ''}`;
 }
 
-/** 切换会话（脏数据确认后）——由 app.js 与侧栏共用 */
-export async function selectSessionById(sid) {
-  if (sid !== store.sid && isAnyDirty()) {
-    const ok = await confirmModal({
-      title: '有未保存的修改',
-      body: '切换会话将丢弃当前未保存的修改，确定继续吗？',
-    });
-    if (!ok) return;
-  }
-  bus.emit('session-select', sid);
-}
-
 /** 关闭移动端抽屉 */
 export function closeDrawer() {
   $('sidebar').classList.remove('open');
   $('scrim').classList.remove('show');
+  $('hamb').setAttribute('aria-expanded', 'false');
 }

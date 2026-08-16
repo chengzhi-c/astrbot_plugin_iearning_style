@@ -10,7 +10,7 @@
 <body>
   <!-- ============ App Bar（顶栏，常驻全局状态） ============ -->
   <header class="appbar">
-    <button class="icon-btn hamburger" id="hamb" aria-label="打开会话列表" title="会话列表">
+    <button class="icon-btn hamburger" id="hamb" aria-label="打开会话列表" aria-expanded="false" title="会话列表">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <div class="brand">
@@ -60,7 +60,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
         <input id="sessSearch" type="text" placeholder="搜索会话 ID…" aria-label="搜索会话">
       </div>
-      <div class="sess-list" id="sessList" role="list"></div>
+      <div class="sess-list" id="sessList"></div>
       <div class="side-foot" id="sideFoot"></div>
     </aside>
 
@@ -98,22 +98,22 @@
         <!-- 二级导航：Tab -->
         <nav class="tabs" id="tabs" role="tablist" aria-label="视图切换">
           <span class="tab-ind" aria-hidden="true"></span>
-          <div class="tab active" data-tab="overview" role="tab" aria-selected="true" tabindex="0">
+          <button class="tab active" type="button" data-tab="overview" role="tab" aria-selected="true" tabindex="0">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
             总览
-          </div>
-          <div class="tab" data-tab="universal" role="tab" aria-selected="false" tabindex="-1">
+          </button>
+          <button class="tab" type="button" data-tab="universal" role="tab" aria-selected="false" tabindex="-1">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-universal)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
             通用
-          </div>
-          <div class="tab" data-tab="contextual" role="tab" aria-selected="false" tabindex="-1">
+          </button>
+          <button class="tab" type="button" data-tab="contextual" role="tab" aria-selected="false" tabindex="-1">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-contextual)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1.5"/><rect x="3" y="16" width="6" height="5" rx="1.5"/><rect x="15" y="16" width="6" height="5" rx="1.5"/><path d="M12 8v4m0 0H9v4m3-4h3v4"/></svg>
             情境
-          </div>
-          <div class="tab" data-tab="specific" role="tab" aria-selected="false" tabindex="-1">
+          </button>
+          <button class="tab" type="button" data-tab="specific" role="tab" aria-selected="false" tabindex="-1">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-specific)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg>
             特定
-          </div>
+          </button>
         </nav>
 
         <div id="tabOverview" class="tab-panel" role="tabpanel"></div>
@@ -123,7 +123,7 @@
   </div>
 
   <!-- ============ 确认弹窗 ============ -->
-  <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+  <dialog class="overlay" id="overlay" aria-labelledby="mTitle">
     <div class="modal">
       <div class="modal-icon" id="mIcon"></div>
       <h3 id="mTitle">确认</h3>
@@ -133,14 +133,14 @@
         <button class="btn danger" id="mOk">确定</button>
       </div>
     </div>
-  </div>
+  </dialog>
 
   <!-- ============ Toast 容器（可堆叠） ============ -->
   <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
 
   <!-- ============ 帮助抽屉 ============ -->
-  <div class="help-ov" id="helpOv">
-    <div class="help-panel" role="dialog" aria-modal="true" aria-label="使用说明">
+  <dialog class="help-ov" id="helpOv" aria-label="使用说明">
+    <div class="help-panel">
       <div class="help-head">
         <h2>入乡随俗 · 使用说明</h2>
         <button class="icon-btn" id="helpClose" aria-label="关闭说明">
@@ -186,7 +186,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </dialog>
 
   <script type="module" src="./src/app.js"></script>
 </body>

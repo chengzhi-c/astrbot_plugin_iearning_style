@@ -62,26 +62,29 @@ export function confirmModal(opts = {}) {
     mOk.className = 'btn ' + (danger ? 'danger' : 'primary');
     mIcon.innerHTML = icon(iconName, 22);
 
-    ov.classList.add('show');
-    ov.dataset.theme = ''; // 继承根主题
-
+    let settled = false;
     const close = (val) => {
-      ov.classList.remove('show');
+      if (settled) return;
+      settled = true;
       mOk.onclick = null;
       mCancel.onclick = null;
-      document.removeEventListener('keydown', onKey);
+      ov.removeEventListener('cancel', onCancel);
+      ov.removeEventListener('click', onBackdrop);
+      ov.close();
       resolve(val);
       if (_lastFocused && _lastFocused.focus) _lastFocused.focus();
     };
-    const onKey = (e) => {
-      if (e.key === 'Escape') close(false);
-      if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    const onCancel = (event) => {
+      event.preventDefault();
+      close(false);
     };
+    const onBackdrop = (event) => { if (event.target === ov) close(false); };
 
     mOk.onclick = () => close(true);
     mCancel.onclick = () => close(false);
-    ov.onclick = (e) => { if (e.target === ov) close(false); };
-    document.addEventListener('keydown', onKey);
+    ov.addEventListener('cancel', onCancel);
+    ov.addEventListener('click', onBackdrop);
+    ov.showModal();
     setTimeout(() => mCancel.focus(), 30); // 默认聚焦安全项
   });
 }

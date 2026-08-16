@@ -4,12 +4,11 @@
 
 import { store, allSids, selectSession, isAnyDirty, counts, LAYERS } from './store.js';
 import { Api, setBridge } from './api.js';
-import { $, el, esc, initTheme, toggleTheme } from './util.js';
+import { $, initTheme, toggleTheme } from './util.js';
 import { icon } from './icons.js';
 import { toast, confirmModal, skeleton } from './ui.js';
-import { bus } from './bus.js';
-import { renderSidebar, selectSessionById, closeDrawer } from './sidebar.js';
-import { renderOverview, setLearnHandler } from './overview.js';
+import { renderSidebar, closeDrawer } from './sidebar.js';
+import { renderOverview } from './overview.js';
 import { renderLayer, renderRows, saveLayer, validateLayer, clearAllDirty } from './layer.js';
 
 /* ============ 注入状态指示 ============ */
@@ -33,6 +32,42 @@ function renderSessionHead() {
     <span class="chip"><i style="background:var(--c-contextual)"></i>情境 ${n.c}</span>
     <span class="chip"><i style="background:var(--c-specific)"></i>特定 ${n.p}</span>
     <span class="chip inj"><i class="${inj === null ? 'dot' : inj ? 'dot on' : 'dot off'}"></i>注入 ${inj === null ? '—' : (inj ? '开' : '关')}</span>`;
+}
+
+function syncThemeIcon(theme = document.documentElement.dataset.theme) {
+  $('btnTheme').innerHTML = icon(theme === 'dark' ? 'sun' : 'moon', 17);
+}
+
+function renderSidebarView() {
+  renderSidebar(handleSessionSelect);
+}
+
+function handleDataChanged() {
+  renderSidebarView();
+  renderSessionHead();
+  if (store.tab === 'overview') renderOverview(learnNow);
+  else renderRows(store.tab);
+}
+
+async function handleSessionSelect(sid) {
+  if (sid === store.sid) {
+    closeDrawer();
+    return;
+  }
+  if (isAnyDirty()) {
+    const ok = await confirmModal({
+      title: '有未保存的修改',
+      body: '切换会话将丢弃当前未保存的修改，确定继续吗？',
+    });
+    if (!ok) return;
+  }
+  clearAllDirty();
+  selectSession(sid);
+  showWork();
+  renderSidebarView();
+  renderSessionHead();
+  switchTab('overview');
+  closeDrawer();
 }
 
 /* ============ 数据加载 ============ */
@@ -70,13 +105,13 @@ async function loadAll() {
   if (!sids.length) {
     $('noSelect').style.display = '';
     $('work').style.display = 'none';
-    renderSidebar();
+    renderSidebarView();
     return;
   }
   if (!store.sid || !sids.includes(store.sid)) selectSession(sids[0]);
   else selectSession(store.sid);
   showWork();
-  renderSidebar();
+  renderSidebarView();
   renderSessionHead();
   switchTab('overview');
 }
@@ -98,8 +133,8 @@ export function switchTab(tab) {
   $('tabOverview').style.display = tab === 'overview' ? '' : 'none';
   $('tabLayer').style.display = tab === 'overview' ? 'none' : '';
   moveTabIndicator();
-  if (tab === 'overview') renderOverview();
-  else renderLayer(tab);
+  if (tab === 'overview') renderOverview(learnNow);
+  else renderLayer(tab, handleDataChanged);
 }
 
 /* ============ 滑动 Tab 指示器 ============ */
@@ -118,12 +153,12 @@ async function refreshSnapshotOnly(discardLocal = false) {
     const snap = await Api.snapshot();
     store.snapshot = snap;
     if (store.sid && (discardLocal || !isAnyDirty())) selectSession(store.sid);
-    renderSidebar();
+    renderSidebarView();
     if (store.sid) {
       renderSessionHead();
       if (discardLocal) switchTab('overview');
-      else if (store.tab === 'overview') renderOverview();
-      else renderLayer(store.tab);
+      else if (store.tab === 'overview') renderOverview(learnNow);
+      else renderLayer(store.tab, handleDataChanged);
     }
   } catch (e) {
     toast('刷新失败：' + (e && e.message ? e.message : e), 'error');
@@ -220,7 +255,10 @@ export async function saveAll() {
   let saved = 0;
   for (const key of dirtyKeys) {
     if (store.sid !== sid) return { ok: false, saved, code: 'session_changed' };
-    const result = await saveLayer(key, { quiet: true });
+    const result = await saveLayer(key, {
+      quiet: true,
+      onSaved: handleDataChanged,
+    });
     if (!result.ok) {
       const layerName = LAYERS.find((layer) => layer.key === key).name;
       const reason = result.code === 'revision_conflict' ? '发生冲突' : '保存失败';
@@ -255,13 +293,25 @@ function onKey(e) {
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    if (store.sid && store.tab !== 'overview') saveLayer(store.tab);
+    if (store.sid && store.tab !== 'overview') {
+      saveLayer(store.tab, { onSaved: handleDataChanged });
+    }
   }
-  if (e.key === 'Escape') {
-    $('overlay').classList.remove('show');
-    $('helpOv').classList.remove('show');
-    closeDrawer();
-  }
+  if (e.key === 'Escape') closeDrawer();
+}
+
+let helpReturnFocus = null;
+
+function openHelp() {
+  const dialog = $('helpOv');
+  helpReturnFocus = document.activeElement;
+  if (!dialog.open) dialog.showModal();
+  setTimeout(() => $('helpClose').focus(), 0);
+}
+
+function closeHelp() {
+  const dialog = $('helpOv');
+  if (dialog.open) dialog.close();
 }
 
 /* ============ 事件绑定 ============ */
@@ -269,30 +319,45 @@ function wireEvents() {
   $('btnRefresh').onclick = refreshAll;
   $('btnTheme').onclick = () => {
     toggleTheme();
-    // 刷新主题图标
-    $('btnTheme').innerHTML = icon(document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon', 17);
   };
-  $('btnHelp').onclick = () => $('helpOv').classList.add('show');
-  $('helpClose').onclick = () => $('helpOv').classList.remove('show');
-  $('helpOv').onclick = (e) => { if (e.target === $('helpOv')) $('helpOv').classList.remove('show'); };
+  $('btnHelp').onclick = openHelp;
+  $('helpClose').onclick = closeHelp;
+  $('helpOv').onclick = (event) => { if (event.target === $('helpOv')) closeHelp(); };
+  $('helpOv').addEventListener('close', () => {
+    helpReturnFocus?.focus?.();
+    helpReturnFocus = null;
+  });
 
   $('btnLearn').onclick = learnNow;
   $('btnClear').onclick = clearSession;
   $('btnExport').onclick = exportSession;
 
-  $('hamb').onclick = () => { $('sidebar').classList.toggle('open'); $('scrim').classList.toggle('show'); };
+  $('hamb').onclick = () => {
+    const open = $('sidebar').classList.toggle('open');
+    $('scrim').classList.toggle('show', open);
+    $('hamb').setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
   $('scrim').onclick = closeDrawer;
 
   $('sessSearch').addEventListener('input', (e) => {
     store.sessFilter = e.target.value;
-    renderSidebar();
+    renderSidebarView();
   });
 
-  document.querySelectorAll('.tab').forEach((t) => {
+  const tabs = [...document.querySelectorAll('.tab')];
+  tabs.forEach((t, index) => {
     const go = () => switchTab(t.dataset.tab);
     t.addEventListener('click', go);
     t.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+      let next = null;
+      if (e.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') next = 0;
+      if (e.key === 'End') next = tabs.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      tabs[next].focus();
+      switchTab(tabs[next].dataset.tab);
     });
   });
 
@@ -307,33 +372,13 @@ function wireEvents() {
     event.returnValue = '';
   });
 
-  // 事件总线：模块解耦后的全局协调
-  bus.on('session-select', (sid) => {
-    clearAllDirty();
-    selectSession(sid);
-    showWork();
-    renderSidebar();
-    renderSessionHead();
-    switchTab('overview');
-    closeDrawer();
-  });
-  bus.on('data-changed', () => {
-    renderSidebar();
-    renderSessionHead();
-    if (store.tab === 'overview') renderOverview();
-    else renderRows(store.tab);
-  });
 }
 
 /* ============ 启动 ============ */
 async function boot() {
-  initTheme();
-  // 主题图标初值
-  const isDark = document.documentElement.dataset.theme === 'dark';
-  $('btnTheme').innerHTML = icon(isDark ? 'sun' : 'moon', 17);
-
   const bridge = window.AstrBotPluginPage;
   if (!bridge) {
+    await initTheme(null, syncThemeIcon);
     toast('请在 AstrBot 面板中打开此页面（扩展 → 插件详情 → 打开插件页面）', 'error');
     $('tabOverview').innerHTML = '';
     $('noSelect').style.display = '';
@@ -341,7 +386,7 @@ async function boot() {
   }
   try { await bridge.ready(); } catch (e) { /* 桥接 ready 可选 */ }
   setBridge(bridge);
-  setLearnHandler(learnNow);
+  await initTheme(bridge, syncThemeIcon);
   await loadAll();
   wireEvents();
 }
