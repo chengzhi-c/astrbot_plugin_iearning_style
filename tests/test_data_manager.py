@@ -273,3 +273,135 @@ async def _stats_seq(dm):
     await asyncio.sleep(0)
     dm.add_contextual("s2", "场景", "行为")
     await asyncio.sleep(0)
+
+
+# ==================== P2 判别：保存调度复用 timer，无 cancel 风暴 ====================
+
+def test_schedule_save_reuses_timer(dm):
+    """P2 判别：连续 mark_dirty 必须复用同一 timer（V1 会 cancel+重建）。"""
+    dm._save_delay = 10  # 拉长延迟避免落盘干扰断言
+    run(_reuse_seq(dm))
+
+
+async def _reuse_seq(dm):
+    dm.replace_universal("s1", ["a"])
+    await asyncio.sleep(0.02)  # 让调度 task 执行，timer 建立
+    t1 = dm._save_timer
+    assert t1 is not None
+    dm.replace_universal("s1", ["b"])  # 第二次 mark_dirty
+    await asyncio.sleep(0.02)
+    assert dm._save_timer is t1, "第二次 mark_dirty 必须复用 timer（V1 会重建）"
+    await dm.force_save()  # 清理 pending timer
+
+
+def test_schedule_save_no_recreate(dm, monkeypatch):
+    """P2 判别：连续 mark_dirty 只创建一个延迟保存 task（V1 每变更重建）。"""
+    dm._save_delay = 10
+    created = []
+    orig_create = asyncio.create_task
+
+    def spy_create(coro, *a, **kw):
+        if getattr(coro, "__qualname__", "") == "DataManager._delayed_save":
+            created.append(coro)
+        return orig_create(coro, *a, **kw)
+
+    monkeypatch.setattr(asyncio, "create_task", spy_create)
+    run(_storm_seq(dm))
+    assert len(created) == 1, (
+        f"5 次 mark_dirty 只应创建 1 个延迟保存 task，实际 {len(created)}"
+    )
+
+
+async def _storm_seq(dm):
+    for i in range(5):
+        dm.replace_universal("s1", [f"t{i}"])
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)
+    await dm.force_save()  # 清理 pending timer
+
+
+# ==================== P2 护栏：写盘期间变更不丢 / 失败保留 dirty ====================
+
+def test_mark_dirty_during_save_not_lost(tmp_path):
+    """护栏：保存完成后再次变更，新值必须落盘（V1/V2 均应通过）。"""
+    dm = _new_dm(tmp_path)
+    run(_during_save_seq(dm))
+    dm2 = _new_dm(tmp_path)
+    contents = [t["content"] for t in dm2.universal.get("s1", [])]
+    assert contents == ["final"]
+
+
+async def _during_save_seq(dm):
+    dm._save_delay = 0.05
+    dm.replace_universal("s1", ["first"])
+    await asyncio.sleep(0.08)  # 等第一次延迟保存完成
+    dm.replace_universal("s1", ["final"])
+    await asyncio.sleep(0.08)  # V2: while 兜底保存；V1: 新 timer 保存
+    await dm.force_save()
+
+
+def test_save_failure_keeps_dirty_and_exits(dm, monkeypatch):
+    """护栏：保存失败保留 dirty 且调度不死循环。"""
+    dm._save_delay = 0.05
+    real_open = open
+
+    def failing_open(*a, **kw):
+        if len(a) >= 2 and a[1] == "w":
+            raise OSError("disk full")
+        return real_open(*a, **kw)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    run(_fail_seq(dm))
+    monkeypatch.undo()
+    assert dm._dirty_universal is True  # 失败保留 dirty
+    assert dm._save_timer is None or dm._save_timer.done()  # 不挂死
+
+
+async def _fail_seq(dm):
+    dm.replace_universal("s1", ["t"])
+    await asyncio.sleep(0.25)  # 覆盖多轮迭代窗口；若死循环则此协程无法返回
+    await dm.force_save()
+
+
+# ==================== P1 回归：clear_session 必须延迟落盘 ====================
+
+def test_clear_session_persists(tmp_path):
+    """P1 回归：清空后必须调度延迟保存（不等 force_save），重启不回退。"""
+    dm = _new_dm(tmp_path)
+    run(_clear_persists_seq(dm, os.path.join(str(tmp_path), "universal.json")))
+
+
+async def _clear_persists_seq(dm, path):
+    dm.replace_universal("s1", ["语气活泼"])
+    await asyncio.sleep(0)
+    await dm.force_save()
+    dm._save_delay = 0.1
+    dm.clear_session("s1")
+    # 轮询磁盘状态（避免裸 sleep 的 flaky 时序），等待延迟保存落盘；
+    # 读盘可能恰逢写文件截断窗口，捕获 JSONDecodeError 跳过重试
+    for _ in range(40):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            await asyncio.sleep(0.05)
+            continue
+        if data == {"s1": []}:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("clear_session 后数据未在延迟保存窗口内落盘")
+
+
+# ==================== P9 回归：chat_history 容量上限 ====================
+
+def test_chat_history_capacity_keeps_recent(dm):
+    """P9 回归：超过容量上限时按 FIFO 保留最近 500 条。"""
+    run(_history_capacity_seq(dm))
+    assert len(dm.chat_history["s1"]) == 500
+    assert dm.chat_history["s1"][0]["seq"] == 10
+    assert dm.chat_history["s1"][-1]["seq"] == 509
+
+
+async def _history_capacity_seq(dm):
+    for i in range(510):
+        await dm.add_message_to_history("s1", {"seq": i})

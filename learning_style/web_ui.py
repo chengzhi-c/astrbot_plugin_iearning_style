@@ -19,7 +19,12 @@ import time
 
 from astrbot.api import logger
 
-from .data_manager import DataManager, MAX_UNIVERSAL_PER_SESSION
+from .data_manager import (
+    DataManager,
+    MAX_UNIVERSAL_PER_SESSION,
+    MAX_CONTEXTUAL_PER_SESSION,
+    MAX_SPECIFIC_PER_SESSION,
+)
 
 PLUGIN_NAME = "astrbot_plugin_iearning_style"
 
@@ -78,7 +83,9 @@ def normalize_webui_entries(
             })
 
     elif layer == "contextual":
-        max_ctx = data_manager.config.get("max_contextual_per_session", 150)
+        max_ctx = data_manager.config.get(
+            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
+        )
         if len(entries) > max_ctx:
             raise ValueError(
                 f"条目数 {len(entries)} 超过情境表征容量上限 {max_ctx}"
@@ -102,7 +109,9 @@ def normalize_webui_entries(
             })
 
     else:  # specific
-        max_specific = data_manager.config.get("max_specific_per_session", 200)
+        max_specific = data_manager.config.get(
+            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
+        )
         if len(entries) > max_specific:
             raise ValueError(
                 f"条目数 {len(entries)} 超过特定表征容量上限 {max_specific}"

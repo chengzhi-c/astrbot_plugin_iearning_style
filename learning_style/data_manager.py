@@ -15,6 +15,13 @@ CONTEXTUAL_BUFFER_RATIO = 0.2  # 20% 为缓冲位
 # WebUI 整层替换时的通用表征上限（与 LLM 提示词的"最多10条"契约一致）
 MAX_UNIVERSAL_PER_SESSION = 10
 
+# 各层容量默认值（与 _conf_schema.json 保持一致，避免多处 fallback 分歧）
+MAX_CONTEXTUAL_PER_SESSION = 150
+MAX_SPECIFIC_PER_SESSION = 200
+
+# 每会话聊天记录保留上限（分析窗口为最近 100 条，500 足够覆盖）
+MAX_CHAT_HISTORY_PER_SESSION = 500
+
 
 class DataManager:
     """
@@ -109,18 +116,36 @@ class DataManager:
             except OSError:
                 pass
 
+    # ==================== 通用加载/保存 ====================
+
+    def _load_layer(self, path: str, attr: str) -> None:
+        """通用层加载：读取 JSON 文件到对应属性，失败回退空 dict。"""
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    setattr(self, attr, json.load(f))
+            except (OSError, json.JSONDecodeError) as e:
+                logger.error(f"加载 {attr} 失败: {e}")
+                setattr(self, attr, {})
+        else:
+            setattr(self, attr, {})
+
+    async def _save_layer(self, path: str, attr: str, dirty_flag: str) -> bool:
+        """通用层保存：成功清 dirty 返回 True，失败保留 dirty 返回 False。"""
+        async with self.lock:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(getattr(self, attr), f, ensure_ascii=False, indent=4)
+                setattr(self, dirty_flag, False)
+                return True
+            except OSError as e:
+                logger.error(f"保存 {attr} 失败: {e}")
+                return False
+
     # ==================== 通用表征 ====================
 
     def load_universal(self):
-        if os.path.exists(self.universal_file):
-            try:
-                with open(self.universal_file, encoding="utf-8") as f:
-                    self.universal = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.error(f"加载通用表征文件失败: {e}")
-                self.universal = {}
-        else:
-            self.universal = {}
+        self._load_layer(self.universal_file, "universal")
 
     def get_universal_for_session(self, session_id: str) -> list[dict[str, Any]]:
         return self.universal.get(session_id, [])
@@ -157,27 +182,15 @@ class DataManager:
         self.universal[session_id] = new_traits
         self._mark_dirty_and_schedule("universal")
 
-    async def save_universal(self):
-        async with self.lock:
-            try:
-                with open(self.universal_file, "w", encoding="utf-8") as f:
-                    json.dump(self.universal, f, ensure_ascii=False, indent=4)
-                self._dirty_universal = False
-            except OSError as e:
-                logger.error(f"保存通用表征文件失败: {e}")
+    async def save_universal(self) -> bool:
+        return await self._save_layer(
+            self.universal_file, "universal", "_dirty_universal"
+        )
 
     # ==================== 情境表征 ====================
 
     def load_contextual(self):
-        if os.path.exists(self.contextual_file):
-            try:
-                with open(self.contextual_file, encoding="utf-8") as f:
-                    self.contextual = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.error(f"加载情境表征文件失败: {e}")
-                self.contextual = {}
-        else:
-            self.contextual = {}
+        self._load_layer(self.contextual_file, "contextual")
 
     def get_contextual_for_session(self, session_id: str) -> list[dict[str, Any]]:
         return self.contextual.get(session_id, [])
@@ -194,7 +207,7 @@ class DataManager:
         """
         添加情境表征。
         - FIFO 添加，标记为缓冲位
-        - 超容量 50 时淘汰最早的
+        - 超容量时淘汰最早的
         - 自动调整缓冲位标记（最新 20% 为缓冲）
         """
         current_time = time.time()
@@ -209,7 +222,9 @@ class DataManager:
         })
 
         # FIFO 容量检查
-        max_capacity = self.config.get("max_contextual_per_session", 50)
+        max_capacity = self.config.get(
+            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
+        )
         while len(self.contextual[session_id]) > max_capacity:
             removed = self.contextual[session_id].pop(0)
             logger.debug(
@@ -293,27 +308,15 @@ class DataManager:
         self._refresh_buffer_markers(session_id)
         self._mark_dirty_and_schedule("contextual")
 
-    async def save_contextual(self):
-        async with self.lock:
-            try:
-                with open(self.contextual_file, "w", encoding="utf-8") as f:
-                    json.dump(self.contextual, f, ensure_ascii=False, indent=4)
-                self._dirty_contextual = False
-            except OSError as e:
-                logger.error(f"保存情境表征文件失败: {e}")
+    async def save_contextual(self) -> bool:
+        return await self._save_layer(
+            self.contextual_file, "contextual", "_dirty_contextual"
+        )
 
     # ==================== 特定表征 ====================
 
     def load_specific(self):
-        if os.path.exists(self.specific_file):
-            try:
-                with open(self.specific_file, encoding="utf-8") as f:
-                    self.specific = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.error(f"加载特定表征文件失败: {e}")
-                self.specific = {}
-        else:
-            self.specific = {}
+        self._load_layer(self.specific_file, "specific")
 
     def get_specific_for_session(self, session_id: str) -> list[dict[str, Any]]:
         return self.specific.get(session_id, [])
@@ -370,62 +373,59 @@ class DataManager:
         self._mark_dirty_and_schedule("specific")
 
     def check_specific_capacity(self, session_id: str):
-        max_specific = self.config.get("max_specific_per_session", 200)
+        max_specific = self.config.get(
+            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
+        )
         if session_id in self.specific and len(self.specific[session_id]) > max_specific:
             excess = len(self.specific[session_id]) - max_specific
             self.remove_lowest_specific(session_id, excess)
 
-    async def save_specific(self):
-        async with self.lock:
-            try:
-                with open(self.specific_file, "w", encoding="utf-8") as f:
-                    json.dump(self.specific, f, ensure_ascii=False, indent=4)
-                self._dirty_specific = False
-            except OSError as e:
-                logger.error(f"保存特定表征文件失败: {e}")
+    async def save_specific(self) -> bool:
+        return await self._save_layer(
+            self.specific_file, "specific", "_dirty_specific"
+        )
 
     # ==================== 公共保存逻辑 ====================
 
     def _mark_dirty_and_schedule(self, layer: str) -> None:
-        """统一入口：标记层脏 + 调度延迟保存。
-
-        关键不变量：本方法必然触发一次 _delayed_save，
-        且该次保存执行前会重新读取 dirty 标志——
-        即使前一个 save task 已把 dirty 清掉，
-        本次的 mark_dirty 在 save 启动前已完成，
-        故 save 必能看到并保存本次变更。
-        """
+        """统一入口：标记层脏 + 调度延迟保存（至多一个活跃 timer）。"""
         setattr(self, f"_dirty_{layer}", True)
         asyncio.create_task(self._schedule_save())
 
     async def _schedule_save(self) -> None:
-        """调度一次延迟保存；若有 pending task 先 await 其终止。
+        """复用活跃 timer：任意时刻至多一个 _delayed_save。
 
-        await 旧 task 的目的：消除「cancel 后就忘」造成的
-        dirty 标志被半完成的旧 save 错误清零的 race。
-        旧 task 被 cancel 时 _delayed_save 抛 CancelledError，
-        dirty 标志保持原值，下一个 _delayed_save 会重新处理。
+        正确性：mark_dirty 后若 timer 活跃，该 timer 的 _delayed_save
+        会在执行时重检全部 dirty（含本次变更），故无需重建。
+        本方法内无 await 点，并发调度天然原子。
         """
         if self._save_timer is not None and not self._save_timer.done():
-            self._save_timer.cancel()
-            try:
-                await self._save_timer
-            except asyncio.CancelledError:
-                pass
+            return
         self._save_timer = asyncio.create_task(self._delayed_save())
 
     async def _delayed_save(self) -> None:
         await asyncio.sleep(self._save_delay)
-        # 重新读取 dirty：期间若有新 mark_dirty，dirty 仍为 True
-        if self._dirty_universal:
-            await self.save_universal()
-        if self._dirty_contextual:
-            await self.save_contextual()
-        if self._dirty_specific:
-            await self.save_specific()
-        if self._dirty_chat_history:
-            await self.save_chat_history()
+        # 循环兜底：写盘期间（save 的 await 点）新标记的 dirty 会被重检保存；
+        # 全部保存失败时 progressed=False 退出，保留 dirty 等下一次调度/force_save 重试
+        while self._any_dirty():
+            progressed = False
+            if self._dirty_universal:
+                progressed |= await self.save_universal()
+            if self._dirty_contextual:
+                progressed |= await self.save_contextual()
+            if self._dirty_specific:
+                progressed |= await self.save_specific()
+            if self._dirty_chat_history:
+                progressed |= await self.save_chat_history()
+            if not progressed:
+                break
         self._save_timer = None
+
+    def _any_dirty(self) -> bool:
+        return any(
+            getattr(self, f"_dirty_{layer}")
+            for layer in ("universal", "contextual", "specific", "chat_history")
+        )
 
     async def force_save(self) -> None:
         if self._save_timer is not None and not self._save_timer.done():
@@ -447,29 +447,20 @@ class DataManager:
     # ==================== 聊天记录 ====================
 
     def load_chat_history(self):
-        if os.path.exists(self.chat_history_file):
-            try:
-                with open(self.chat_history_file, encoding="utf-8") as f:
-                    self.chat_history = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
-                logger.error(f"加载聊天记录文件失败: {e}")
-                self.chat_history = {}
-        else:
-            self.chat_history = {}
+        self._load_layer(self.chat_history_file, "chat_history")
 
-    async def save_chat_history(self):
-        async with self.lock:
-            try:
-                with open(self.chat_history_file, "w", encoding="utf-8") as f:
-                    json.dump(self.chat_history, f, ensure_ascii=False, indent=4)
-                self._dirty_chat_history = False
-            except OSError as e:
-                logger.error(f"保存聊天记录文件失败: {e}")
+    async def save_chat_history(self) -> bool:
+        return await self._save_layer(
+            self.chat_history_file, "chat_history", "_dirty_chat_history"
+        )
 
     async def add_message_to_history(self, session_id: str, message: dict[str, Any]):
         if session_id not in self.chat_history:
             self.chat_history[session_id] = []
         self.chat_history[session_id].append(message)
+        excess = len(self.chat_history[session_id]) - MAX_CHAT_HISTORY_PER_SESSION
+        if excess > 0:
+            del self.chat_history[session_id][:excess]
         self._dirty_chat_history = True
         await self._schedule_save()
 
@@ -510,8 +501,8 @@ class DataManager:
             "injection_enabled": self.config.get("enable_style_injection", True),
             "caps": {
                 "universal": MAX_UNIVERSAL_PER_SESSION,
-                "contextual": self.config.get("max_contextual_per_session", 150),
-                "specific": self.config.get("max_specific_per_session", 200),
+                "contextual": self.config.get("max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION),
+                "specific": self.config.get("max_specific_per_session", MAX_SPECIFIC_PER_SESSION),
             },
         }
 
@@ -519,10 +510,10 @@ class DataManager:
         """清空某会话的全部三层表征（不改变聊天记录）。"""
         if session_id in self.universal:
             self.universal[session_id] = []
-            self._dirty_universal = True
+            self._mark_dirty_and_schedule("universal")
         if session_id in self.contextual:
             self.contextual[session_id] = []
-            self._dirty_contextual = True
+            self._mark_dirty_and_schedule("contextual")
         if session_id in self.specific:
             self.specific[session_id] = []
             self._mark_dirty_and_schedule("specific")

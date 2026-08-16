@@ -101,6 +101,22 @@ class StyleInjector:
                 continue
         return hit
 
+    @staticmethod
+    def format_summary_block(summary: dict[str, Any]) -> str:
+        """将 get_style_summary 的结果格式化为不含标题的统计文本块。"""
+        lines = [
+            f"通用表征：{summary['universal_count']} 条",
+            f"情境表征：{summary['contextual_count']} 条",
+            f"特定表征：{summary['specific_count']} 条",
+        ]
+        if summary["universal_preview"]:
+            lines.append(f"通用 Top-3：{', '.join(summary['universal_preview'])}")
+        if summary["contextual_preview"]:
+            lines.append(f"情境 Top-3：{', '.join(summary['contextual_preview'])}")
+        if summary["specific_preview"]:
+            lines.append(f"特定 Top-3：{', '.join(summary['specific_preview'])}")
+        return "\n".join(lines)
+
     def get_style_summary(self, session_id: str) -> dict[str, Any]:
         universal = self.data_manager.get_universal_for_session(session_id)
         contextual = self.data_manager.get_contextual_for_session(session_id)

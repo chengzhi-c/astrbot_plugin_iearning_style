@@ -1,4 +1,3 @@
-import asyncio
 import time
 
 from astrbot.api import logger
@@ -16,7 +15,7 @@ from .learning_style.web_ui import StylePage
     "astrbot_plugin_iearning_style",
     "qa296",
     "从聊天中学习他人说话方式。",
-    "1.0.1",
+    "1.1.0",
     "https://github.com/chengzhi-c/astrbot_plugin_iearning_style",
 )
 class IearningStylePlugin(Star):
@@ -79,43 +78,14 @@ class IearningStylePlugin(Star):
             yield event.plain_result("当前会话还没有学习到任何风格特点。")
             return
 
-        response = "当前会话风格状态：\n"
-        response += f"通用表征：{summary['universal_count']} 条\n"
-        response += f"情境表征：{summary['contextual_count']} 条\n"
-        response += f"特定表征：{summary['specific_count']} 条\n"
-
-        if summary["universal_preview"]:
-            response += (
-                f"通用 Top-3：{', '.join(summary['universal_preview'])}\n"
-            )
-
-        if summary["contextual_preview"]:
-            response += (
-                f"情境 Top-3：{', '.join(summary['contextual_preview'])}\n"
-            )
-
-        if summary["specific_preview"]:
-            response += (
-                f"特定 Top-3：{', '.join(summary['specific_preview'])}\n"
-            )
-
-        yield event.plain_result(response.strip())
+        yield event.plain_result(
+            f"当前会话风格状态：\n{StyleInjector.format_summary_block(summary)}"
+        )
 
     @filter.command("清空风格")
     async def clear_styles(self, event: AstrMessageEvent):
         session_id = event.unified_msg_origin
-
-        if session_id in self.data_manager.universal:
-            self.data_manager.universal[session_id] = []
-            self.data_manager._dirty_universal = True
-        if session_id in self.data_manager.contextual:
-            self.data_manager.contextual[session_id] = []
-            self.data_manager._dirty_contextual = True
-        if session_id in self.data_manager.specific:
-            self.data_manager.specific[session_id] = []
-            self.data_manager._dirty_specific = True
-
-        asyncio.create_task(self.data_manager._schedule_save())
+        self.data_manager.clear_session(session_id)
         yield event.plain_result("已清空当前会话的所有学习风格。")
 
     @filter.command("学习总结")
@@ -137,17 +107,10 @@ class IearningStylePlugin(Star):
             await self.learning_manager.analyze_and_learn(session_id)
 
             summary = self.style_injector.get_style_summary(session_id)
-            response = "学习分析完成！\n"
-            response += f"通用表征：{summary['universal_count']} 条\n"
-            response += f"情境表征：{summary['contextual_count']} 条\n"
-            response += f"特定表征：{summary['specific_count']} 条"
-
-            if summary["universal_preview"]:
-                response += f"\n通用 Top-3：{', '.join(summary['universal_preview'])}"
-            if summary["contextual_preview"]:
-                response += f"\n情境 Top-3：{', '.join(summary['contextual_preview'])}"
-            if summary["specific_preview"]:
-                response += f"\n特定 Top-3：{', '.join(summary['specific_preview'])}"
+            response = (
+                "学习分析完成！\n"
+                + StyleInjector.format_summary_block(summary)
+            )
 
             yield event.plain_result(response)
 

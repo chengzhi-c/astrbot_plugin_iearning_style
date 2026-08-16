@@ -2,12 +2,12 @@
 // 视图渲染与局部交互在 views.js；状态在 store.js；桥接封装在 api.js。
 
 import {
-  store, allSids, isAnyDirty, selectSession,
+  store, allSids, isAnyDirty, selectSession, rebuildModel,
 } from './store.js';
 import { Api, setBridge } from './api.js';
 import * as Views from './views.js';
 import {
-  $, toast, confirmModal, initTheme, toggleTheme, clone,
+  $, toast, confirmModal, initTheme, toggleTheme,
 } from './util.js';
 
 let bridge = null;
@@ -78,14 +78,8 @@ async function saveAll() {
 async function discardAll() {
   const ok = await confirmModal({ title: '丢弃修改', body: '确定丢弃所有未保存的修改？' });
   if (!ok) return;
-  const sid = store.sid;
   store.dirty = {};
-  const s = store.snapshot;
-  store.model = {
-    universal: clone((s.universal && s.universal[sid]) || []),
-    contextual: clone((s.contextual && s.contextual[sid]) || []),
-    specific: clone((s.specific && s.specific[sid]) || []),
-  };
+  rebuildModel(store.sid);
   Views.switchTab(store.tab);
 }
 

@@ -14,7 +14,7 @@ export const LAYERS = [
   },
   {
     key: 'specific', name: '特定', color: 'var(--c-specific)',
-    hint: '群内梗与释义。trigger_regex 目前仅做存储校验，未参与注入匹配；正则非法时该层拒绝保存并提示具体条目。',
+    hint: '群内梗与释义。trigger_regex 命中用户消息时该梗才会被注入回复（按需注入，prompt 不膨胀）；正则非法时该层拒绝保存并提示具体条目。',
   },
 ];
 
@@ -54,15 +54,19 @@ export function isAnyDirty() {
   return LAYERS.some((l) => store.dirty[l.key]);
 }
 
-export function selectSession(sid) {
-  store.sid = sid;
-  store.dirty = {};
-  store.layerFilter = '';
-  store.tab = 'overview';
+export function rebuildModel(sid) {
   const s = store.snapshot || {};
   store.model = {
     universal: clone((s.universal && s.universal[sid]) || []),
     contextual: clone((s.contextual && s.contextual[sid]) || []),
     specific: clone((s.specific && s.specific[sid]) || []),
   };
+}
+
+export function selectSession(sid) {
+  store.sid = sid;
+  store.dirty = {};
+  store.layerFilter = '';
+  store.tab = 'overview';
+  rebuildModel(sid);
 }

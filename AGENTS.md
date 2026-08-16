@@ -21,9 +21,9 @@
 - **不变量 1**：任何标记脏层之后，
   必然有对应的延迟保存读取到 dirty=True 并保存。
 
-- **不变量 2**：调度保存时必须等待旧任务真正终止，
-  不可「cancel 后就忘」——否则旧任务的半完成保存
-  会把 dirty 标志错误清零，丢失新标记的数据。
+- **不变量 2**：任意时刻至多一个延迟保存任务（timer）；
+  保存执行时重检全部 dirty 标志，写盘期间的新变更由
+  while 兜底重检保证不丢；保存失败保留 dirty 待下次重试。
 
 - **不变量 3**：`DataManager.__init__` 中迁移旧格式
   须在 load 与 dirty 清零**之后**，
@@ -60,9 +60,14 @@
 
 ## 测试
 
-- 后端：`pytest tests/ -v`（25 项，覆盖边界/race/迁移/ReDoS/JSON 提取）。
+- 后端：`pytest tests/ -v`（31 项，覆盖边界/race/迁移/ReDoS/JSON 提取/容量/落盘/调度复用）。
 - 任何改动 DataManager 保存逻辑的 PR，必须跑
   `test_schedule_save_no_data_loss_under_race` 回归。
+
+## 发版约定
+
+- `metadata.yaml` / `main.py` @register / `index.html` verTag
+  三处版本号必须同步。
 
 ## 语言规则
 

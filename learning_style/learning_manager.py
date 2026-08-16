@@ -206,9 +206,11 @@ class LearningManager:
                     self.data_manager.add_contextual(session_id, scene, behavior)
 
             if contextual:
+                descriptions = [
+                    f"{c.get('scene', '')}→{c.get('behavior', '')}" for c in contextual
+                ]
                 logger.info(
-                    f"为会话 {session_id} 添加情境表征: "
-                    f"{[f'{c['scene']}→{c['behavior']}' for c in contextual]}"
+                    f"为会话 {session_id} 添加情境表征: {descriptions}"
                 )
 
             # 特定表征：逐条添加
