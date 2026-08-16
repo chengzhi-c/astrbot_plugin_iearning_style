@@ -11,6 +11,14 @@ from .learning_style.style_injector import StyleInjector
 from .learning_style.web_ui import StylePage
 
 
+_LEARN_FAILURE_MESSAGES = {
+    "busy": "当前会话正在学习，请稍候。",
+    "no_provider": "学习分析失败：未找到可用的 LLM 提供商。",
+    "provider_error": "学习分析失败：LLM 提供商调用失败。",
+    "invalid_response": "学习分析失败：LLM 返回内容无效。",
+}
+
+
 @register(
     "astrbot_plugin_iearning_style",
     "qa296",
@@ -86,25 +94,40 @@ class IearningStylePlugin(Star):
     async def clear_styles(self, event: AstrMessageEvent):
         session_id = event.unified_msg_origin
         self.data_manager.clear_session(session_id)
-        yield event.plain_result("已清空当前会话的所有学习风格。")
+        if await self.data_manager.force_save():
+            yield event.plain_result("已清空当前会话的所有学习风格。")
+        else:
+            yield event.plain_result(
+                "风格已在内存中清空，但保存失败；系统会自动重试。"
+            )
 
     @filter.command("学习总结")
     async def learn_now(self, event: AstrMessageEvent):
         """手动触发当前会话的学习分析"""
         session_id = event.unified_msg_origin
 
-        chat_history = self.data_manager.get_chat_history(session_id, limit=100)
-        min_history = self.config.get("min_history_for_analysis", 10)
-        if len(chat_history) < min_history:
-            yield event.plain_result(
-                f"当前会话聊天记录不足 {min_history} 条，无法进行分析。"
-            )
-            return
-
         yield event.plain_result("正在分析聊天记录并学习风格特征，请稍候...")
 
         try:
-            await self.learning_manager.analyze_and_learn(session_id)
+            result = await self.learning_manager.analyze_and_learn(session_id)
+            if not result.ok:
+                if result.code == "insufficient_history":
+                    min_history = self.config.get("min_history_for_analysis", 10)
+                    message = (
+                        f"当前会话聊天记录不足 {min_history} 条，无法进行分析。"
+                    )
+                else:
+                    message = _LEARN_FAILURE_MESSAGES.get(
+                        result.code, "学习分析失败：未知错误。"
+                    )
+                yield event.plain_result(message)
+                return
+
+            if not await self.data_manager.force_save():
+                yield event.plain_result(
+                    "学习结果已更新，但保存失败；系统会自动重试。"
+                )
+                return
 
             summary = self.style_injector.get_style_summary(session_id)
             response = (

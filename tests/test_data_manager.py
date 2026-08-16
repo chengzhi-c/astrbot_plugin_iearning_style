@@ -8,6 +8,7 @@
 本测试用 asyncio.run(...) 包裹此类调用。
 """
 import asyncio
+import copy
 import json
 import os
 
@@ -405,3 +406,85 @@ def test_chat_history_capacity_keeps_recent(dm):
 async def _history_capacity_seq(dm):
     for i in range(510):
         await dm.add_message_to_history("s1", {"seq": i})
+
+
+# ==================== S1: transactional learning ====================
+
+def test_apply_learning_result_is_transactional(dm):
+    dm.universal["s1"] = [{"content": "old", "proficiency": 20}]
+    dm.contextual["s1"] = [{"scene": "old", "behavior": "old"}]
+    dm.specific["s1"] = [{"content": "old", "trigger_regex": "old"}]
+    before = copy.deepcopy((dm.universal, dm.contextual, dm.specific))
+    payload = {
+        "universal": ["new"],
+        "contextual": [
+            {"scene": "valid", "behavior": "valid"},
+            {"scene": "missing behavior"},
+        ],
+        "specific": [],
+    }
+
+    with pytest.raises(ValueError):
+        dm.apply_learning_result("s1", payload)
+
+    assert (dm.universal, dm.contextual, dm.specific) == before
+
+
+def test_apply_learning_result_updates_regex_without_resetting_stats(dm):
+    dm.specific["s1"] = [{
+        "content": "梗",
+        "trigger_regex": "old",
+        "trigger_count": 9,
+        "first_seen": 10,
+        "last_seen": 20,
+    }]
+    payload = {
+        "universal": [],
+        "contextual": [],
+        "specific": [{"content": "梗", "trigger_regex": "new"}],
+    }
+
+    run(_apply_learning_result(dm, payload))
+
+    trait = dm.specific["s1"][0]
+    assert trait["trigger_regex"] == "new"
+    assert trait["trigger_count"] == 9
+    assert trait["first_seen"] == 10
+    assert trait["last_seen"] == 20
+
+
+async def _apply_learning_result(dm, payload):
+    assert dm.apply_learning_result("s1", payload) is True
+    await asyncio.sleep(0)
+    await dm.force_save()
+
+
+def test_analysis_batch_consumes_only_through_marker(dm):
+    first = {"seq": 1}
+    marker = {"seq": 2}
+    later = {"seq": 3}
+    dm.chat_history["s1"] = [first, marker]
+
+    batch, opaque_marker = dm.get_analysis_batch("s1", limit=100)
+    assert batch == [first, marker]
+    dm.chat_history["s1"].append(later)
+    run(_consume_analysis_batch(dm, opaque_marker))
+
+    assert dm.chat_history["s1"] == [later]
+
+
+def test_analysis_batch_missing_marker_does_not_consume(dm):
+    dm.chat_history["s1"] = [{"seq": 1}, {"seq": 2}]
+    _, opaque_marker = dm.get_analysis_batch("s1", limit=100)
+    replacement = [{"seq": 3}]
+    dm.chat_history["s1"] = replacement
+
+    run(_consume_analysis_batch(dm, opaque_marker))
+
+    assert dm.chat_history["s1"] is replacement
+
+
+async def _consume_analysis_batch(dm, marker):
+    dm.consume_analysis_batch("s1", marker)
+    await asyncio.sleep(0)
+    await dm.force_save()

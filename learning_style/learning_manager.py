@@ -1,11 +1,30 @@
 import json
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from astrbot.api import logger
 from astrbot.api.star import Star
 
 from .data_manager import DataManager
+
+
+LearnCode = Literal[
+    "learned",
+    "insufficient_history",
+    "no_provider",
+    "provider_error",
+    "invalid_response",
+    "busy",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class LearnResult:
+    ok: bool
+    code: LearnCode
+    detail: str = ""
+    changed: bool = False
 
 
 def _extract_json(text: str) -> str | None:
@@ -57,6 +76,7 @@ class LearningManager:
         self.context = star_instance.context
         self.data_manager = data_manager
         self.config = config
+        self._active_sessions: set[str] = set()
 
     def _get_provider(self):
         """根据配置选择学习分析用的 LLM 提供商。
@@ -74,36 +94,59 @@ class LearningManager:
             )
         return self.context.get_using_provider()
 
-    async def analyze_and_learn(self, session_id: str):
-        min_history = self.config.get("min_history_for_analysis", 10)
-        chat_history = self.data_manager.get_chat_history(session_id, limit=100)
-        if len(chat_history) < min_history:
-            return
-
-        prompt = self._build_prompt(session_id, chat_history)
-
+    async def analyze_and_learn(self, session_id: str) -> LearnResult:
+        if session_id in self._active_sessions:
+            return LearnResult(False, "busy")
+        self._active_sessions.add(session_id)
         try:
+            min_history = self.config.get("min_history_for_analysis", 10)
+            chat_history, marker = self.data_manager.get_analysis_batch(
+                session_id, limit=100
+            )
+            if len(chat_history) < min_history:
+                return LearnResult(False, "insufficient_history")
+
+            prompt = self._build_prompt(session_id, chat_history)
             provider = self._get_provider()
             if provider is None:
                 logger.warning("未找到可用的 LLM 提供商，跳过本次学习分析。")
-                return
+                return LearnResult(False, "no_provider")
 
-            llm_response = await provider.text_chat(
-                prompt=prompt,
-                contexts=[],
-                system_prompt="你是一个群聊文化分析师，从聊天记录中提取这个群的说话风格、社交模式和内部梗。",
-            )
-
-            if llm_response.role == "assistant":
-                await self._parse_and_store_results(
-                    session_id, llm_response.completion_text
+            try:
+                llm_response = await provider.text_chat(
+                    prompt=prompt,
+                    contexts=[],
+                    system_prompt="你是一个群聊文化分析师，从聊天记录中提取这个群的说话风格、社交模式和内部梗。",
                 )
-                await self.data_manager.clear_chat_history(session_id)
-            else:
-                logger.warning(f"LLM 调用失败或返回非预期的角色: {llm_response.role}")
+            except Exception:
+                logger.exception("学习 provider 调用失败")
+                return LearnResult(False, "provider_error")
 
-        except Exception as e:
-            logger.error(f"分析学习过程中发生错误: {e}")
+            completion_text = getattr(llm_response, "completion_text", "")
+            if (
+                getattr(llm_response, "role", None) != "assistant"
+                or not isinstance(completion_text, str)
+                or not completion_text.strip()
+            ):
+                logger.warning("学习 provider 返回了无效响应")
+                return LearnResult(False, "invalid_response")
+
+            try:
+                json_text = _extract_json(completion_text)
+                if json_text is None:
+                    raise ValueError("response does not contain a JSON object")
+                payload = json.loads(json_text)
+                changed = self.data_manager.apply_learning_result(
+                    session_id, payload
+                )
+            except ValueError:
+                logger.warning("学习 provider 返回的 JSON 无效")
+                return LearnResult(False, "invalid_response")
+
+            self.data_manager.consume_analysis_batch(session_id, marker)
+            return LearnResult(True, "learned", changed=changed)
+        finally:
+            self._active_sessions.discard(session_id)
 
     def _build_prompt(
         self, session_id: str, chat_history: list[dict[str, Any]]
@@ -180,55 +223,3 @@ class LearningManager:
 {{"universal": ["爱用表情包", "喜欢玩烂梗", "语气夸张"], "contextual": [{{"scene": "有人发消息", "behavior": "全员复读"}}, {{"scene": "群友自称萌新", "behavior": "假装也是萌新"}}], "specific": [{{"content": "xx（表达喜欢的意思）", "trigger_regex": "xx|x"}}]}}
 """
         return prompt
-
-    async def _parse_and_store_results(self, session_id: str, llm_output: str):
-        try:
-            json_str = _extract_json(llm_output)
-            if json_str is None:
-                logger.error(
-                    f"无法从 LLM 输出提取 JSON。原始输出: {llm_output}"
-                )
-                return
-            results = json.loads(json_str)
-
-            # 通用表征：全量替换
-            universal = results.get("universal", [])
-            if universal:
-                self.data_manager.replace_universal(session_id, universal)
-                logger.info(f"为会话 {session_id} 更新通用表征: {universal}")
-
-            # 情境表征：逐条添加
-            contextual = results.get("contextual", [])
-            for item in contextual:
-                scene = item.get("scene", "")
-                behavior = item.get("behavior", "")
-                if scene and behavior:
-                    self.data_manager.add_contextual(session_id, scene, behavior)
-
-            if contextual:
-                descriptions = [
-                    f"{c.get('scene', '')}→{c.get('behavior', '')}" for c in contextual
-                ]
-                logger.info(
-                    f"为会话 {session_id} 添加情境表征: {descriptions}"
-                )
-
-            # 特定表征：逐条添加
-            specific = results.get("specific", [])
-            for item in specific:
-                content = item.get("content", "")
-                trigger_regex = item.get("trigger_regex", "")
-                if content and trigger_regex:
-                    self.data_manager.add_or_update_specific(
-                        session_id, content, trigger_regex
-                    )
-
-            if specific:
-                logger.info(
-                    f"为会话 {session_id} 添加特定表征: {[s['content'] for s in specific]}"
-                )
-
-            self.data_manager.check_specific_capacity(session_id)
-
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"解析 LLM 输出失败: {e}\n原始输出: {llm_output}")

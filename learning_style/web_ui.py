@@ -28,6 +28,14 @@ from .data_manager import (
 
 PLUGIN_NAME = "astrbot_plugin_iearning_style"
 
+_LEARN_ERRORS = {
+    "insufficient_history": ("聊天记录不足，无法进行分析", 400),
+    "no_provider": ("未找到可用的 LLM 提供商", 503),
+    "provider_error": ("LLM 提供商调用失败", 503),
+    "invalid_response": ("LLM 返回内容无效", 422),
+    "busy": ("当前会话正在学习，请稍候", 409),
+}
+
 try:
     from astrbot.api.web import error_response, json_response, request
 
@@ -224,6 +232,12 @@ class StylePage:
             self.data_manager.replace_layer(sid.strip(), layer, normalized)
         except ValueError as e:
             return error_response(str(e))
+        if not await self.data_manager.force_save():
+            return error_response(
+                "数据已更新，但保存失败；系统会自动重试",
+                status_code=500,
+                data={"code": "save_failed"},
+            )
         return json_response({"status": "ok", "data": {"saved": True}})
 
     @staticmethod
@@ -249,11 +263,31 @@ class StylePage:
         if not sid:
             return error_response("缺少会话 ID")
         try:
-            await self.learning_manager.analyze_and_learn(sid)
+            result = await self.learning_manager.analyze_and_learn(sid)
         except Exception as e:  # noqa: BLE001
             logger.error(f"触发学习分析失败: {e}")
-            return error_response(f"学习分析失败：{e}")
-        return json_response({"status": "ok", "data": {"learned": True}})
+            return error_response(
+                "学习分析发生未知错误",
+                status_code=500,
+                data={"code": "internal_error"},
+            )
+        if not result.ok:
+            message, status_code = _LEARN_ERRORS[result.code]
+            return error_response(
+                message,
+                status_code=status_code,
+                data={"code": result.code},
+            )
+        if not await self.data_manager.force_save():
+            return error_response(
+                "学习结果已更新，但保存失败；系统会自动重试",
+                status_code=500,
+                data={"code": "save_failed"},
+            )
+        return json_response({
+            "status": "ok",
+            "data": {"learned": True, "changed": result.changed},
+        })
 
     async def _clear_session(self):
         payload = await request.json(default=None)
@@ -261,6 +295,12 @@ class StylePage:
         if not sid:
             return error_response("缺少会话 ID")
         self.data_manager.clear_session(sid)
+        if not await self.data_manager.force_save():
+            return error_response(
+                "数据已清空，但保存失败；系统会自动重试",
+                status_code=500,
+                data={"code": "save_failed"},
+            )
         return json_response({"status": "ok", "data": {"cleared": True}})
 
     async def _export_session(self):

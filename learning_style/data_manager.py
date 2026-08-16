@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import difflib
 import json
 import os
@@ -156,6 +157,14 @@ class DataManager:
         - 延续的表征 proficiency +5，confirmed_rounds +1
         - 新增的表征 proficiency=10，confirmed_rounds=1
         """
+        self.universal[session_id] = self._build_universal_traits(
+            session_id, contents
+        )
+        self._mark_dirty_and_schedule("universal")
+
+    def _build_universal_traits(
+        self, session_id: str, contents: list[str]
+    ) -> list[dict[str, Any]]:
         current_time = time.time()
         old_map = {}
         for trait in self.universal.get(session_id, []):
@@ -179,8 +188,7 @@ class DataManager:
                     "last_updated": current_time,
                 })
 
-        self.universal[session_id] = new_traits
-        self._mark_dirty_and_schedule("universal")
+        return new_traits
 
     async def save_universal(self) -> bool:
         return await self._save_layer(
@@ -238,6 +246,10 @@ class DataManager:
     def _refresh_buffer_markers(self, session_id: str):
         """重新计算并标记情境表征的缓冲位。"""
         traits = self.contextual.get(session_id, [])
+        self._set_buffer_markers(traits)
+
+    @staticmethod
+    def _set_buffer_markers(traits: list[dict[str, Any]]) -> None:
         if not traits:
             return
         buffer_count = max(1, int(len(traits) * CONTEXTUAL_BUFFER_RATIO))
@@ -324,22 +336,11 @@ class DataManager:
     def add_or_update_specific(
         self, session_id: str, content: str, trigger_regex: str
     ):
-        # ReDoS 防护：限制正则长度，拒绝嵌套量词
-        if len(trigger_regex) > 200:
-            logger.error(
-                f"特定表征 '{content}' 的正则过长 (>200 字符)，拒绝存储"
-            )
-            return
-        if re.search(r"\([^()]*[+*?][^()]*\)[+*?]", trigger_regex):
-            logger.error(
-                f"特定表征 '{content}' 的正则含嵌套量词，可能 ReDoS，拒绝存储"
-            )
-            return
         try:
-            re.compile(trigger_regex)
-        except re.error as e:
+            self.validate_trigger_regex(trigger_regex)
+        except ValueError as exc:
             logger.error(
-                f"特定表征 '{content}' 的正则表达式无效: {trigger_regex}, 错误: {e}"
+                f"特定表征 '{content}' 的正则无效，拒绝存储: {exc}"
             )
             return
 
@@ -379,6 +380,129 @@ class DataManager:
         if session_id in self.specific and len(self.specific[session_id]) > max_specific:
             excess = len(self.specific[session_id]) - max_specific
             self.remove_lowest_specific(session_id, excess)
+
+    @staticmethod
+    def validate_trigger_regex(trigger_regex: str) -> None:
+        if not isinstance(trigger_regex, str) or not trigger_regex.strip():
+            raise ValueError("trigger_regex must be a non-empty string")
+        if len(trigger_regex) > 200:
+            raise ValueError("trigger_regex exceeds 200 characters")
+        if re.search(r"\([^()]*[+*?][^()]*\)[+*?]", trigger_regex):
+            raise ValueError("trigger_regex contains nested quantifiers")
+        try:
+            re.compile(trigger_regex)
+        except re.error as exc:
+            raise ValueError("trigger_regex is invalid") from exc
+
+    def apply_learning_result(self, session_id: str, payload: Any) -> bool:
+        """Validate and apply one LLM result without partial mutations."""
+        if not isinstance(payload, dict):
+            raise ValueError("learning result must be an object")
+
+        for field in ("universal", "contextual", "specific"):
+            if not isinstance(payload.get(field), list):
+                raise ValueError(f"{field} must be a list")
+
+        universal_contents = []
+        for content in payload["universal"]:
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("universal entries must be non-empty strings")
+            universal_contents.append(content)
+
+        contextual_items = []
+        for item in payload["contextual"]:
+            if not isinstance(item, dict):
+                raise ValueError("contextual entries must be objects")
+            scene = item.get("scene")
+            behavior = item.get("behavior")
+            if not isinstance(scene, str) or not scene.strip():
+                raise ValueError("contextual scene must be a non-empty string")
+            if not isinstance(behavior, str) or not behavior.strip():
+                raise ValueError("contextual behavior must be a non-empty string")
+            contextual_items.append((scene, behavior))
+
+        specific_items = []
+        for item in payload["specific"]:
+            if not isinstance(item, dict):
+                raise ValueError("specific entries must be objects")
+            content = item.get("content")
+            trigger_regex = item.get("trigger_regex")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("specific content must be a non-empty string")
+            self.validate_trigger_regex(trigger_regex)
+            specific_items.append((content, trigger_regex))
+
+        now = time.time()
+        new_universal = self._build_universal_traits(
+            session_id, universal_contents
+        )
+
+        new_contextual = copy.deepcopy(self.contextual.get(session_id, []))
+        new_contextual.extend(
+            {
+                "scene": scene,
+                "behavior": behavior,
+                "created_at": now,
+                "_in_buffer": True,
+            }
+            for scene, behavior in contextual_items
+        )
+        max_contextual = self.config.get(
+            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
+        )
+        if len(new_contextual) > max_contextual:
+            new_contextual = new_contextual[-max_contextual:]
+        self._set_buffer_markers(new_contextual)
+
+        new_specific = copy.deepcopy(self.specific.get(session_id, []))
+        for content, trigger_regex in specific_items:
+            existing = next(
+                (item for item in new_specific if item.get("content") == content),
+                None,
+            )
+            if existing is not None:
+                existing["trigger_regex"] = trigger_regex
+                continue
+            new_specific.append({
+                "content": content,
+                "trigger_regex": trigger_regex,
+                "trigger_count": 1,
+                "first_seen": now,
+                "last_seen": now,
+            })
+
+        max_specific = self.config.get(
+            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
+        )
+        if len(new_specific) > max_specific:
+            excess = len(new_specific) - max_specific
+            new_specific = sorted(
+                new_specific, key=lambda item: item.get("trigger_count", 0)
+            )[excess:]
+
+        old_values = {
+            "universal": self.universal.get(session_id, []),
+            "contextual": self.contextual.get(session_id, []),
+            "specific": self.specific.get(session_id, []),
+        }
+        new_values = {
+            "universal": new_universal,
+            "contextual": new_contextual,
+            "specific": new_specific,
+        }
+        changed_layers = [
+            layer
+            for layer in new_values
+            if new_values[layer] != old_values[layer]
+        ]
+        if not changed_layers:
+            return False
+
+        for layer in changed_layers:
+            getattr(self, layer)[session_id] = new_values[layer]
+        for layer in changed_layers:
+            self._mark_dirty_and_schedule(layer)
+        return True
 
     async def save_specific(self) -> bool:
         return await self._save_layer(
@@ -427,7 +551,7 @@ class DataManager:
             for layer in ("universal", "contextual", "specific", "chat_history")
         )
 
-    async def force_save(self) -> None:
+    async def force_save(self) -> bool:
         if self._save_timer is not None and not self._save_timer.done():
             self._save_timer.cancel()
             try:
@@ -435,14 +559,16 @@ class DataManager:
             except asyncio.CancelledError:
                 pass
             self._save_timer = None
+        results = []
         if self._dirty_universal:
-            await self.save_universal()
+            results.append(await self.save_universal())
         if self._dirty_contextual:
-            await self.save_contextual()
+            results.append(await self.save_contextual())
         if self._dirty_specific:
-            await self.save_specific()
+            results.append(await self.save_specific())
         if self._dirty_chat_history:
-            await self.save_chat_history()
+            results.append(await self.save_chat_history())
+        return all(results) and not self._any_dirty()
 
     # ==================== 聊天记录 ====================
 
@@ -468,6 +594,24 @@ class DataManager:
         self, session_id: str, limit: int = 50
     ) -> list[dict[str, Any]]:
         return self.chat_history.get(session_id, [])[-limit:]
+
+    def get_analysis_batch(
+        self, session_id: str, limit: int = 100
+    ) -> tuple[list[dict[str, Any]], object | None]:
+        batch = self.chat_history.get(session_id, [])[-limit:]
+        marker = batch[-1] if batch else None
+        return batch, marker
+
+    def consume_analysis_batch(self, session_id: str, marker: object | None) -> bool:
+        if marker is None:
+            return False
+        history = self.chat_history.get(session_id, [])
+        for index, message in enumerate(history):
+            if message is marker:
+                del history[: index + 1]
+                self._mark_dirty_and_schedule("chat_history")
+                return True
+        return False
 
     async def clear_chat_history(self, session_id: str):
         if session_id in self.chat_history:

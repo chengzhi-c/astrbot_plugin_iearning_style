@@ -60,11 +60,14 @@ class Scheduler:
             all_sessions = list(self.data_manager.chat_history.keys())
             for session_id in all_sessions:
                 try:
-                    await self.learning_manager.analyze_and_learn(session_id)
+                    result = await self.learning_manager.analyze_and_learn(session_id)
+                    if not result.ok and result.code != "insufficient_history":
+                        logger.warning(f"周期学习跳过: {result.code}")
                     await asyncio.sleep(0)
                 except Exception as e:
                     logger.error(f"分析会话 {session_id} 时出错: {e}")
-            await self.data_manager.force_save()
+            if not await self.data_manager.force_save():
+                logger.error("周期学习结果保存失败，将在后续任务中重试。")
 
     async def _run_maintenance(self):
         maintenance_interval = self.config.get("maintenance_interval_seconds", 86400)
