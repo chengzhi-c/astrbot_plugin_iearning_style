@@ -411,8 +411,6 @@ async def _history_capacity_seq(dm):
         dm.add_message_to_history("s1", {"seq": i})
 
 
-# ==================== S1: transactional learning ====================
-
 def test_apply_learning_result_is_transactional(dm):
     dm.universal["s1"] = [{"content": "old", "proficiency": 20}]
     dm.contextual["s1"] = [{"scene": "old", "behavior": "old"}]
@@ -492,8 +490,6 @@ async def _consume_analysis_batch(dm, marker):
     await asyncio.sleep(0)
     await dm.force_save()
 
-
-# ==================== S2: durable persistence ====================
 
 def test_atomic_save_failure_keeps_previous_json(tmp_path, monkeypatch):
     dm = _new_dm(tmp_path)
@@ -674,8 +670,6 @@ async def _add_with_invalid_capacities(dm):
     await dm.force_save()
 
 
-# ==================== S3: bounded regex matching and hit statistics ====================
-
 def test_regex_timeout_bounds_match_time(tmp_path):
     dm = _new_dm(tmp_path)
     dm.specific["s1"] = [{
@@ -733,8 +727,6 @@ def test_oversized_message_skips_specific_matching(tmp_path):
     assert injection["specific"] == []
     assert dm.specific["s1"][0]["trigger_count"] == 1
 
-
-# ==================== S4: revisioned durable layer replacement ====================
 
 def test_layer_revision_rejects_stale_save_without_mutation(tmp_path):
     dm = _new_dm(tmp_path)
