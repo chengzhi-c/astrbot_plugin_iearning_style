@@ -76,6 +76,17 @@ class LearningManager:
         self.context = star_instance.context
         self.data_manager = data_manager
         self.config = config
+        min_history = config.get("min_history_for_analysis", 10)
+        if (
+            isinstance(min_history, bool)
+            or not isinstance(min_history, int)
+            or min_history < 1
+        ):
+            logger.warning(
+                "配置 min_history_for_analysis 必须是正整数，已回退为 10。"
+            )
+            min_history = 10
+        self.min_history = min_history
         self._active_sessions: set[str] = set()
 
     def _get_provider(self):
@@ -99,11 +110,10 @@ class LearningManager:
             return LearnResult(False, "busy")
         self._active_sessions.add(session_id)
         try:
-            min_history = self.config.get("min_history_for_analysis", 10)
             chat_history, marker = self.data_manager.get_analysis_batch(
                 session_id, limit=100
             )
-            if len(chat_history) < min_history:
+            if len(chat_history) < self.min_history:
                 return LearnResult(False, "insufficient_history")
 
             prompt = self._build_prompt(session_id, chat_history)

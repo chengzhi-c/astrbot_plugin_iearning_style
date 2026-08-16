@@ -21,7 +21,7 @@ class StyleInjector:
         self.style_selector = StyleSelector()
 
     def should_inject_style(self, session_id: str) -> bool:
-        if not self.config.get("enable_style_injection", True):
+        if not self.data_manager.enable_style_injection:
             return False
 
         universal = self.data_manager.get_universal_for_session(session_id)

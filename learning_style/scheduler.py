@@ -22,9 +22,22 @@ class Scheduler:
         self.data_manager = data_manager
         self.learning_manager = learning_manager
         self.config = config
+        self.analysis_interval = self._positive_interval(
+            "analysis_interval_seconds", 3600
+        )
+        self.maintenance_interval = self._positive_interval(
+            "maintenance_interval_seconds", 86400
+        )
         self.analysis_task: asyncio.Task | None = None
         self.maintenance_task: asyncio.Task | None = None
         self.is_running = False
+
+    def _positive_interval(self, key: str, default: int) -> int:
+        value = self.config.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            logger.warning(f"配置 {key} 必须是正整数，已回退为 {default}。")
+            return default
+        return value
 
     def start(self):
         if not self.is_running:
@@ -53,9 +66,8 @@ class Scheduler:
             logger.info("定时任务已停止。")
 
     async def _run_analysis(self):
-        analysis_interval = self.config.get("analysis_interval_seconds", 3600)
         while self.is_running:
-            await asyncio.sleep(analysis_interval)
+            await asyncio.sleep(self.analysis_interval)
             logger.info("开始执行周期性聊天记录分析...")
             all_sessions = list(self.data_manager.chat_history.keys())
             for session_id in all_sessions:
@@ -70,9 +82,8 @@ class Scheduler:
                 logger.error("周期学习结果保存失败，将在后续任务中重试。")
 
     async def _run_maintenance(self):
-        maintenance_interval = self.config.get("maintenance_interval_seconds", 86400)
         while self.is_running:
-            await asyncio.sleep(maintenance_interval)
+            await asyncio.sleep(self.maintenance_interval)
             logger.info("开始执行周期性风格维护...")
             await self._perform_maintenance()
             await asyncio.sleep(0)
@@ -86,5 +97,7 @@ class Scheduler:
             except Exception as e:
                 logger.error(f"维护会话 {session_id} 时出错: {e}")
 
-        await self.data_manager.force_save()
-        logger.info("风格维护完成（情境缓冲合并）。")
+        if await self.data_manager.force_save():
+            logger.info("风格维护完成（情境缓冲合并）。")
+        else:
+            logger.error("风格维护保存失败，将在后续任务中重试。")

@@ -1,9 +1,11 @@
 import asyncio
 import copy
 import difflib
+import hashlib
 import json
 import os
 import re
+import shutil
 import time
 from typing import Any
 
@@ -23,6 +25,8 @@ MAX_SPECIFIC_PER_SESSION = 200
 # 每会话聊天记录保留上限（分析窗口为最近 100 条，500 足够覆盖）
 MAX_CHAT_HISTORY_PER_SESSION = 500
 
+LAYERS = ("universal", "contextual", "specific", "chat_history")
+
 
 class DataManager:
     """
@@ -38,6 +42,13 @@ class DataManager:
         self.contextual_file = os.path.join(data_dir, "contextual.json")
         self.specific_file = os.path.join(data_dir, "specific.json")
         self.chat_history_file = os.path.join(data_dir, "chat_history.json")
+        self.transaction_file = os.path.join(data_dir, ".save-transaction.json")
+        self._layer_files = {
+            "universal": self.universal_file,
+            "contextual": self.contextual_file,
+            "specific": self.specific_file,
+            "chat_history": self.chat_history_file,
+        }
 
         self.universal: dict[str, list[dict[str, Any]]] = {}
         self.contextual: dict[str, list[dict[str, Any]]] = {}
@@ -45,23 +56,47 @@ class DataManager:
         self.chat_history: dict[str, list[dict[str, Any]]] = {}
 
         self.config = config
+        self.max_contextual_per_session = self._positive_int_config(
+            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
+        )
+        self.max_specific_per_session = self._positive_int_config(
+            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
+        )
+        self.enable_contextual_merge = self._bool_config(
+            "enable_contextual_merge", True
+        )
+        self.enable_style_injection = self._bool_config(
+            "enable_style_injection", True
+        )
+
+        self._save_lock = asyncio.Lock()
+        self._dirty: set[str] = set()
+        self._save_timer: asyncio.Task | None = None
+        self._save_delay = 5.0
 
         self._ensure_data_dir()
+        self._recover_save_transaction()
+        for layer, path in self._layer_files.items():
+            self._recover_atomic_temp(layer, path)
         self.load_universal()
         self.load_contextual()
         self.load_specific()
         self.load_chat_history()
-        self.lock = asyncio.Lock()
-
-        self._dirty_universal = False
-        self._dirty_contextual = False
-        self._dirty_specific = False
-        self._dirty_chat_history = False
-        self._save_timer = None
-        self._save_delay = 5.0
-        # 迁移旧格式须在 load_* 与 dirty 清零之后，
-        # 迁移写入的 universal 不会被空文件加载覆盖，dirty 标志也不会被清。
         self._handle_old_format()
+
+    def _positive_int_config(self, key: str, default: int) -> int:
+        value = self.config.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            logger.warning(f"配置 {key} 必须是正整数，已回退为 {default}。")
+            return default
+        return value
+
+    def _bool_config(self, key: str, default: bool) -> bool:
+        value = self.config.get(key, default)
+        if not isinstance(value, bool):
+            logger.warning(f"配置 {key} 必须是布尔值，已回退为 {default}。")
+            return default
+        return value
 
     def _ensure_data_dir(self):
         if not os.path.exists(self.data_dir):
@@ -73,8 +108,7 @@ class DataManager:
 
         旧格式：{session_id: [trait, ...]}，无三层区分。
         迁移策略：全部并入 universal 层作为初始基色，
-        用户可在 WebUI 重新分类。迁移成功后备份为
-        styles.json.migrated.bak，失败回退 .bak。
+        用户可在 WebUI 重新分类。目标文件落盘后才备份源文件。
         """
         old_file = os.path.join(self.data_dir, "styles.json")
         if not os.path.exists(old_file):
@@ -86,62 +120,275 @@ class DataManager:
             if not isinstance(old_data, dict):
                 raise ValueError("旧格式根对象应为 dict")
             now = time.time()
-            migrated = 0
+            migrated_store = copy.deepcopy(self.universal)
             for sid, traits in old_data.items():
+                if not isinstance(sid, str) or not sid.strip():
+                    raise ValueError("旧格式会话 ID 必须是非空字符串")
                 if not isinstance(traits, list):
-                    continue
-                self.universal[sid] = [
-                    {
-                        "content": (
-                            t.get("content", str(t))
-                            if isinstance(t, dict)
-                            else str(t)
-                        ),
+                    raise ValueError("旧格式会话内容必须是 list")
+                normalized = []
+                for trait in traits:
+                    content = trait.get("content") if isinstance(trait, dict) else trait
+                    if not isinstance(content, str) or not content.strip():
+                        raise ValueError("旧格式表征必须是非空字符串")
+                    normalized.append({
+                        "content": content,
                         "proficiency": 10,
                         "confirmed_rounds": 1,
                         "last_updated": now,
-                    }
-                    for t in traits
-                ]
-                migrated += 1
-            self._dirty_universal = True
-            os.rename(old_file, old_file + ".migrated.bak")
+                    })
+                migrated_store[sid] = normalized
+
+            self._write_json_atomic(self.universal_file, migrated_store)
+            self.universal = migrated_store
+            os.replace(old_file, old_file + ".migrated.bak")
             logger.info(
-                f"迁移完成：{migrated} 个会话的旧表征已并入通用层，"
+                f"迁移完成：{len(old_data)} 个会话的旧表征已并入通用层，"
                 f"旧文件备份为 styles.json.migrated.bak。"
             )
         except (OSError, json.JSONDecodeError, ValueError) as e:
-            logger.error(f"迁移旧格式失败: {e}，旧文件保留为 styles.json.bak")
-            try:
-                os.rename(old_file, old_file + ".bak")
-            except OSError:
-                pass
+            logger.error(f"迁移旧格式失败: {e}，源文件保持不变。")
 
     # ==================== 通用加载/保存 ====================
 
-    def _load_layer(self, path: str, attr: str) -> None:
-        """通用层加载：读取 JSON 文件到对应属性，失败回退空 dict。"""
-        if os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    setattr(self, attr, json.load(f))
-            except (OSError, json.JSONDecodeError) as e:
-                logger.error(f"加载 {attr} 失败: {e}")
-                setattr(self, attr, {})
-        else:
-            setattr(self, attr, {})
+    @staticmethod
+    def _nonnegative_number(value: Any, default: int | float) -> int | float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            return default
+        return value
 
-    async def _save_layer(self, path: str, attr: str, dirty_flag: str) -> bool:
-        """通用层保存：成功清 dirty 返回 True，失败保留 dirty 返回 False。"""
-        async with self.lock:
+    def _normalize_entry(self, layer: str, item: Any) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        if layer == "universal":
+            content = item.get("content")
+            if not isinstance(content, str) or not content.strip():
+                return None
+            return {
+                "content": content,
+                "proficiency": self._nonnegative_number(
+                    item.get("proficiency"), 10
+                ),
+                "confirmed_rounds": self._nonnegative_number(
+                    item.get("confirmed_rounds"), 1
+                ),
+                "last_updated": self._nonnegative_number(
+                    item.get("last_updated"), 0
+                ),
+            }
+        if layer == "contextual":
+            scene = item.get("scene")
+            behavior = item.get("behavior")
+            if not isinstance(scene, str) or not scene.strip():
+                return None
+            if not isinstance(behavior, str) or not behavior.strip():
+                return None
+            return {
+                "scene": scene,
+                "behavior": behavior,
+                "created_at": self._nonnegative_number(item.get("created_at"), 0),
+                "_in_buffer": item.get("_in_buffer", False)
+                if isinstance(item.get("_in_buffer", False), bool)
+                else False,
+            }
+        if layer == "specific":
+            content = item.get("content")
+            trigger_regex = item.get("trigger_regex")
+            if not isinstance(content, str) or not content.strip():
+                return None
             try:
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(getattr(self, attr), f, ensure_ascii=False, indent=4)
-                setattr(self, dirty_flag, False)
-                return True
-            except OSError as e:
-                logger.error(f"保存 {attr} 失败: {e}")
-                return False
+                self.validate_trigger_regex(trigger_regex)
+            except ValueError:
+                return None
+            return {
+                "content": content,
+                "trigger_regex": trigger_regex,
+                "trigger_count": self._nonnegative_number(
+                    item.get("trigger_count"), 1
+                ),
+                "first_seen": self._nonnegative_number(item.get("first_seen"), 0),
+                "last_seen": self._nonnegative_number(item.get("last_seen"), 0),
+            }
+        sender = item.get("sender")
+        content = item.get("content")
+        if not isinstance(sender, str) or not isinstance(content, str):
+            return None
+        return {
+            "sender": sender,
+            "content": content,
+            "timestamp": self._nonnegative_number(item.get("timestamp"), 0),
+        }
+
+    def _normalize_store(
+        self, layer: str, raw: Any
+    ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+        if not isinstance(raw, dict):
+            raise ValueError("root must be an object")
+        cleaned: dict[str, list[dict[str, Any]]] = {}
+        changed = False
+        for session_id, entries in raw.items():
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("session ID must be a non-empty string")
+            if not isinstance(entries, list):
+                raise ValueError("session value must be a list")
+            normalized_entries = []
+            for index, item in enumerate(entries):
+                normalized = self._normalize_entry(layer, item)
+                if normalized is None:
+                    changed = True
+                    logger.warning(
+                        f"加载 {layer} 时跳过无效条目: session={session_id}, index={index}"
+                    )
+                    continue
+                normalized_entries.append(normalized)
+                if normalized != item:
+                    changed = True
+            cleaned[session_id] = normalized_entries
+        return cleaned, changed
+
+    def _corrupt_backup_path(self, path: str) -> str:
+        stamp = int(time.time() * 1000)
+        backup = f"{path}.corrupt.{stamp}.bak"
+        while os.path.exists(backup):
+            stamp += 1
+            backup = f"{path}.corrupt.{stamp}.bak"
+        return backup
+
+    def _load_layer(self, path: str, attr: str) -> None:
+        if not os.path.exists(path):
+            setattr(self, attr, {})
+            return
+        try:
+            with open(path, encoding="utf-8") as file:
+                raw = json.load(file)
+            cleaned, changed = self._normalize_store(attr, raw)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.error(f"加载 {attr} 失败: {exc}")
+            try:
+                os.replace(path, self._corrupt_backup_path(path))
+            except OSError as backup_error:
+                logger.error(f"备份损坏的 {attr} 文件失败: {backup_error}")
+            setattr(self, attr, {})
+            return
+
+        setattr(self, attr, cleaned)
+        if changed:
+            try:
+                shutil.copy2(path, self._corrupt_backup_path(path))
+                self._write_json_atomic(path, cleaned)
+            except OSError as exc:
+                logger.error(f"清理 {attr} 文件失败: {exc}")
+
+    def _is_valid_layer_file(self, layer: str, path: str) -> bool:
+        try:
+            with open(path, encoding="utf-8") as file:
+                raw = json.load(file)
+            cleaned, _ = self._normalize_store(layer, raw)
+            return all(
+                len(cleaned[session_id]) == len(entries)
+                for session_id, entries in raw.items()
+            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+
+    def _recover_atomic_temp(self, layer: str, path: str) -> None:
+        tmp_path = f"{path}.tmp"
+        if not os.path.exists(tmp_path):
+            return
+        try:
+            if os.path.exists(path) and self._is_valid_layer_file(layer, path):
+                os.remove(tmp_path)
+            elif self._is_valid_layer_file(layer, tmp_path):
+                os.replace(tmp_path, path)
+                logger.warning(f"已从临时文件恢复 {layer}。")
+            else:
+                os.remove(tmp_path)
+        except OSError as exc:
+            logger.error(f"处理 {layer} 临时文件失败: {exc}")
+
+    @staticmethod
+    def _file_hash(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as file:
+            for chunk in iter(lambda: file.read(65536), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _write_json_file(path: str, data: Any) -> None:
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=4)
+            file.flush()
+            os.fsync(file.fileno())
+
+    def _write_json_atomic(self, path: str, data: Any) -> None:
+        tmp_path = f"{path}.tmp"
+        try:
+            self._write_json_file(tmp_path, data)
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def _remove_orphan_transaction_temps(self) -> None:
+        for target in self._layer_files.values():
+            prefix = os.path.basename(target) + ".txn."
+            for name in os.listdir(self.data_dir):
+                if name.startswith(prefix) and name.endswith(".tmp"):
+                    try:
+                        os.remove(os.path.join(self.data_dir, name))
+                    except OSError:
+                        pass
+
+    def _recover_save_transaction(self) -> bool:
+        if not os.path.exists(self.transaction_file):
+            journal_tmp = f"{self.transaction_file}.tmp"
+            if os.path.exists(journal_tmp):
+                try:
+                    os.remove(journal_tmp)
+                except OSError:
+                    pass
+            self._remove_orphan_transaction_temps()
+            return True
+        try:
+            with open(self.transaction_file, encoding="utf-8") as file:
+                manifest = json.load(file)
+            entries = manifest.get("entries") if isinstance(manifest, dict) else None
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("invalid transaction manifest")
+            allowed_targets = {
+                os.path.basename(path): path for path in self._layer_files.values()
+            }
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("invalid transaction entry")
+                target_name = entry.get("target")
+                temp_name = entry.get("temp")
+                expected_hash = entry.get("sha256")
+                if target_name not in allowed_targets:
+                    raise ValueError("unknown transaction target")
+                if (
+                    not isinstance(temp_name, str)
+                    or os.path.basename(temp_name) != temp_name
+                    or not isinstance(expected_hash, str)
+                ):
+                    raise ValueError("invalid transaction path or hash")
+                target = allowed_targets[target_name]
+                temp = os.path.join(self.data_dir, temp_name)
+                if os.path.exists(temp) and self._file_hash(temp) == expected_hash:
+                    os.replace(temp, target)
+                elif not (
+                    os.path.exists(target)
+                    and self._file_hash(target) == expected_hash
+                ):
+                    raise ValueError("transaction data is missing or corrupted")
+            os.remove(self.transaction_file)
+            self._remove_orphan_transaction_temps()
+            logger.warning("已完成中断的多文件保存事务。")
+            return True
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.error(f"恢复多文件保存事务失败: {exc}")
+            return False
 
     # ==================== 通用表征 ====================
 
@@ -160,7 +407,7 @@ class DataManager:
         self.universal[session_id] = self._build_universal_traits(
             session_id, contents
         )
-        self._mark_dirty_and_schedule("universal")
+        self._mark_dirty("universal")
 
     def _build_universal_traits(
         self, session_id: str, contents: list[str]
@@ -191,9 +438,7 @@ class DataManager:
         return new_traits
 
     async def save_universal(self) -> bool:
-        return await self._save_layer(
-            self.universal_file, "universal", "_dirty_universal"
-        )
+        return await self._save_layers({"universal"})
 
     # ==================== 情境表征 ====================
 
@@ -230,9 +475,7 @@ class DataManager:
         })
 
         # FIFO 容量检查
-        max_capacity = self.config.get(
-            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
-        )
+        max_capacity = self.max_contextual_per_session
         while len(self.contextual[session_id]) > max_capacity:
             removed = self.contextual[session_id].pop(0)
             logger.debug(
@@ -241,7 +484,7 @@ class DataManager:
 
         # 重新标记缓冲位（最新 20%）
         self._refresh_buffer_markers(session_id)
-        self._mark_dirty_and_schedule("contextual")
+        self._mark_dirty("contextual")
 
     def _refresh_buffer_markers(self, session_id: str):
         """重新计算并标记情境表征的缓冲位。"""
@@ -261,7 +504,7 @@ class DataManager:
         if session_id in self.contextual and 0 <= index < len(self.contextual[session_id]):
             self.contextual[session_id].pop(index)
             self._refresh_buffer_markers(session_id)
-            self._mark_dirty_and_schedule("contextual")
+            self._mark_dirty("contextual")
 
     def merge_contextual_buffer(self, session_id: str, threshold: float = 0.85):
         """
@@ -274,13 +517,18 @@ class DataManager:
         配置 enable_contextual_merge=false 时跳过合并，
         情境表征仅按 FIFO 淘汰。
         """
-        if not self.config.get("enable_contextual_merge", True):
+        if not self.enable_contextual_merge:
             return
         if session_id not in self.contextual:
             return
 
+        original_contextual = self.contextual[session_id]
+        original_universal = self.universal.get(session_id, [])
+        original_specific = self.specific.get(session_id, [])
+        universal = copy.deepcopy(original_universal)
+        specific = copy.deepcopy(original_specific)
         remaining = []
-        for item in self.contextual[session_id]:
+        for item in copy.deepcopy(original_contextual):
             if not item.get("_in_buffer"):
                 remaining.append(item)
                 continue
@@ -289,8 +537,8 @@ class DataManager:
             merged = False
 
             # 尝试合并到通用
-            if session_id in self.universal:
-                for u in self.universal[session_id]:
+            if universal:
+                for u in universal:
                     score = difflib.SequenceMatcher(None, text, u["content"]).ratio()
                     if score > threshold:
                         u["proficiency"] = min(100, u.get("proficiency", 0) + 5)
@@ -302,8 +550,8 @@ class DataManager:
                 continue
 
             # 尝试合并到特定
-            if session_id in self.specific:
-                for s in self.specific[session_id]:
+            if specific:
+                for s in specific:
                     score = difflib.SequenceMatcher(
                         None, text, s["content"]
                     ).ratio()
@@ -316,14 +564,22 @@ class DataManager:
             if not merged:
                 remaining.append(item)
 
-        self.contextual[session_id] = remaining
-        self._refresh_buffer_markers(session_id)
-        self._mark_dirty_and_schedule("contextual")
+        self._set_buffer_markers(remaining)
+        changed_layers = []
+        if remaining != original_contextual:
+            self.contextual[session_id] = remaining
+            changed_layers.append("contextual")
+        if universal != original_universal:
+            self.universal[session_id] = universal
+            changed_layers.append("universal")
+        if specific != original_specific:
+            self.specific[session_id] = specific
+            changed_layers.append("specific")
+        if changed_layers:
+            self._mark_dirty(*changed_layers)
 
     async def save_contextual(self) -> bool:
-        return await self._save_layer(
-            self.contextual_file, "contextual", "_dirty_contextual"
-        )
+        return await self._save_layers({"contextual"})
 
     # ==================== 特定表征 ====================
 
@@ -352,7 +608,7 @@ class DataManager:
             if trait["content"] == content:
                 trait["trigger_count"] = trait.get("trigger_count", 0) + 1
                 trait["last_seen"] = current_time
-                self._mark_dirty_and_schedule("specific")
+                self._mark_dirty("specific")
                 return
 
         self.specific[session_id].append({
@@ -362,7 +618,7 @@ class DataManager:
             "first_seen": current_time,
             "last_seen": current_time,
         })
-        self._mark_dirty_and_schedule("specific")
+        self._mark_dirty("specific")
 
     def remove_lowest_specific(self, session_id: str, count: int):
         if session_id not in self.specific or count <= 0:
@@ -371,12 +627,10 @@ class DataManager:
             self.specific[session_id], key=lambda t: t.get("trigger_count", 0)
         )
         self.specific[session_id] = traits[count:]
-        self._mark_dirty_and_schedule("specific")
+        self._mark_dirty("specific")
 
     def check_specific_capacity(self, session_id: str):
-        max_specific = self.config.get(
-            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
-        )
+        max_specific = self.max_specific_per_session
         if session_id in self.specific and len(self.specific[session_id]) > max_specific:
             excess = len(self.specific[session_id]) - max_specific
             self.remove_lowest_specific(session_id, excess)
@@ -447,9 +701,7 @@ class DataManager:
             }
             for scene, behavior in contextual_items
         )
-        max_contextual = self.config.get(
-            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
-        )
+        max_contextual = self.max_contextual_per_session
         if len(new_contextual) > max_contextual:
             new_contextual = new_contextual[-max_contextual:]
         self._set_buffer_markers(new_contextual)
@@ -471,9 +723,7 @@ class DataManager:
                 "last_seen": now,
             })
 
-        max_specific = self.config.get(
-            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
-        )
+        max_specific = self.max_specific_per_session
         if len(new_specific) > max_specific:
             excess = len(new_specific) - max_specific
             new_specific = sorted(
@@ -500,56 +750,90 @@ class DataManager:
 
         for layer in changed_layers:
             getattr(self, layer)[session_id] = new_values[layer]
-        for layer in changed_layers:
-            self._mark_dirty_and_schedule(layer)
+        self._mark_dirty(*changed_layers)
         return True
 
     async def save_specific(self) -> bool:
-        return await self._save_layer(
-            self.specific_file, "specific", "_dirty_specific"
-        )
+        return await self._save_layers({"specific"})
 
     # ==================== 公共保存逻辑 ====================
 
-    def _mark_dirty_and_schedule(self, layer: str) -> None:
-        """统一入口：标记层脏 + 调度延迟保存（至多一个活跃 timer）。"""
-        setattr(self, f"_dirty_{layer}", True)
-        asyncio.create_task(self._schedule_save())
-
-    async def _schedule_save(self) -> None:
-        """复用活跃 timer：任意时刻至多一个 _delayed_save。
-
-        正确性：mark_dirty 后若 timer 活跃，该 timer 的 _delayed_save
-        会在执行时重检全部 dirty（含本次变更），故无需重建。
-        本方法内无 await 点，并发调度天然原子。
-        """
+    def _mark_dirty(self, *layers: str) -> None:
+        """Mark changed layers and ensure one delayed save is active."""
+        self._dirty.update(layers)
         if self._save_timer is not None and not self._save_timer.done():
             return
         self._save_timer = asyncio.create_task(self._delayed_save())
 
     async def _delayed_save(self) -> None:
-        await asyncio.sleep(self._save_delay)
-        # 循环兜底：写盘期间（save 的 await 点）新标记的 dirty 会被重检保存；
-        # 全部保存失败时 progressed=False 退出，保留 dirty 等下一次调度/force_save 重试
-        while self._any_dirty():
-            progressed = False
-            if self._dirty_universal:
-                progressed |= await self.save_universal()
-            if self._dirty_contextual:
-                progressed |= await self.save_contextual()
-            if self._dirty_specific:
-                progressed |= await self.save_specific()
-            if self._dirty_chat_history:
-                progressed |= await self.save_chat_history()
-            if not progressed:
-                break
-        self._save_timer = None
+        try:
+            await asyncio.sleep(self._save_delay)
+            while self._dirty:
+                if not await self._save_layers(set(self._dirty)):
+                    break
+        finally:
+            self._save_timer = None
 
     def _any_dirty(self) -> bool:
-        return any(
-            getattr(self, f"_dirty_{layer}")
-            for layer in ("universal", "contextual", "specific", "chat_history")
-        )
+        return bool(self._dirty)
+
+    async def _save_layers(self, requested: set[str]) -> bool:
+        async with self._save_lock:
+            if not self._recover_save_transaction():
+                return False
+            layers = [layer for layer in LAYERS if layer in requested & self._dirty]
+            if not layers:
+                return True
+            if len(layers) == 1:
+                layer = layers[0]
+                try:
+                    self._write_json_atomic(
+                        self._layer_files[layer], getattr(self, layer)
+                    )
+                except OSError as exc:
+                    logger.error(f"保存 {layer} 失败: {exc}")
+                    return False
+                self._dirty.discard(layer)
+                return True
+            return self._save_transaction(layers)
+
+    def _save_transaction(self, layers: list[str]) -> bool:
+        transaction_id = time.time_ns()
+        entries = []
+        try:
+            for layer in layers:
+                target = self._layer_files[layer]
+                temp_name = f"{os.path.basename(target)}.txn.{transaction_id}.tmp"
+                temp_path = os.path.join(self.data_dir, temp_name)
+                self._write_json_file(temp_path, getattr(self, layer))
+                entries.append({
+                    "layer": layer,
+                    "temp": temp_name,
+                    "target": os.path.basename(target),
+                    "sha256": self._file_hash(temp_path),
+                })
+            self._write_json_atomic(
+                self.transaction_file, {"version": 1, "entries": entries}
+            )
+            for entry in entries:
+                os.replace(
+                    os.path.join(self.data_dir, entry["temp"]),
+                    os.path.join(self.data_dir, entry["target"]),
+                )
+            os.remove(self.transaction_file)
+        except OSError as exc:
+            logger.error(f"多文件保存失败: {exc}")
+            if not os.path.exists(self.transaction_file):
+                for entry in entries:
+                    temp = os.path.join(self.data_dir, entry["temp"])
+                    if os.path.exists(temp):
+                        try:
+                            os.remove(temp)
+                        except OSError:
+                            pass
+            return False
+        self._dirty.difference_update(layers)
+        return True
 
     async def force_save(self) -> bool:
         if self._save_timer is not None and not self._save_timer.done():
@@ -559,16 +843,7 @@ class DataManager:
             except asyncio.CancelledError:
                 pass
             self._save_timer = None
-        results = []
-        if self._dirty_universal:
-            results.append(await self.save_universal())
-        if self._dirty_contextual:
-            results.append(await self.save_contextual())
-        if self._dirty_specific:
-            results.append(await self.save_specific())
-        if self._dirty_chat_history:
-            results.append(await self.save_chat_history())
-        return all(results) and not self._any_dirty()
+        return await self._save_layers(set(self._dirty))
 
     # ==================== 聊天记录 ====================
 
@@ -576,19 +851,16 @@ class DataManager:
         self._load_layer(self.chat_history_file, "chat_history")
 
     async def save_chat_history(self) -> bool:
-        return await self._save_layer(
-            self.chat_history_file, "chat_history", "_dirty_chat_history"
-        )
+        return await self._save_layers({"chat_history"})
 
-    async def add_message_to_history(self, session_id: str, message: dict[str, Any]):
+    def add_message_to_history(self, session_id: str, message: dict[str, Any]):
         if session_id not in self.chat_history:
             self.chat_history[session_id] = []
         self.chat_history[session_id].append(message)
         excess = len(self.chat_history[session_id]) - MAX_CHAT_HISTORY_PER_SESSION
         if excess > 0:
             del self.chat_history[session_id][:excess]
-        self._dirty_chat_history = True
-        await self._schedule_save()
+        self._mark_dirty("chat_history")
 
     def get_chat_history(
         self, session_id: str, limit: int = 50
@@ -609,15 +881,14 @@ class DataManager:
         for index, message in enumerate(history):
             if message is marker:
                 del history[: index + 1]
-                self._mark_dirty_and_schedule("chat_history")
+                self._mark_dirty("chat_history")
                 return True
         return False
 
-    async def clear_chat_history(self, session_id: str):
+    def clear_chat_history(self, session_id: str):
         if session_id in self.chat_history:
             self.chat_history[session_id] = []
-            self._dirty_chat_history = True
-            await self._schedule_save()
+            self._mark_dirty("chat_history")
 
     # ==================== WebUI 管理 ====================
 
@@ -642,11 +913,11 @@ class DataManager:
         return {
             "total_sessions": len(sids),
             "total_entries": total_entries,
-            "injection_enabled": self.config.get("enable_style_injection", True),
+            "injection_enabled": self.enable_style_injection,
             "caps": {
                 "universal": MAX_UNIVERSAL_PER_SESSION,
-                "contextual": self.config.get("max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION),
-                "specific": self.config.get("max_specific_per_session", MAX_SPECIFIC_PER_SESSION),
+                "contextual": self.max_contextual_per_session,
+                "specific": self.max_specific_per_session,
             },
         }
 
@@ -654,13 +925,13 @@ class DataManager:
         """清空某会话的全部三层表征（不改变聊天记录）。"""
         if session_id in self.universal:
             self.universal[session_id] = []
-            self._mark_dirty_and_schedule("universal")
+            self._mark_dirty("universal")
         if session_id in self.contextual:
             self.contextual[session_id] = []
-            self._mark_dirty_and_schedule("contextual")
+            self._mark_dirty("contextual")
         if session_id in self.specific:
             self.specific[session_id] = []
-            self._mark_dirty_and_schedule("specific")
+            self._mark_dirty("specific")
 
     def export_session(self, session_id: str) -> dict[str, Any]:
         """导出某会话的三层表征（供 WebUI 下载，剔除内部缓冲标记）。"""
@@ -683,11 +954,11 @@ class DataManager:
         """
         if layer == "universal":
             self.universal[session_id] = normalized
-            self._mark_dirty_and_schedule("universal")
+            self._mark_dirty("universal")
         elif layer == "contextual":
             self.contextual[session_id] = normalized
             self._refresh_buffer_markers(session_id)
-            self._mark_dirty_and_schedule("contextual")
+            self._mark_dirty("contextual")
         else:
             self.specific[session_id] = normalized
-            self._mark_dirty_and_schedule("specific")
+            self._mark_dirty("specific")

@@ -166,6 +166,15 @@ def test_insufficient_history_has_explicit_result(tmp_path):
     assert result == LearnResult(False, "insufficient_history")
 
 
+def test_invalid_min_history_falls_back_to_default(tmp_path):
+    manager, data_manager = make_manager(tmp_path, None, min_history=-1)
+    data_manager.chat_history["s1"] = [{"sender": "a", "content": "one"}]
+
+    result = run(manager.analyze_and_learn("s1"))
+
+    assert result == LearnResult(False, "insufficient_history")
+
+
 def test_valid_empty_universal_clears_existing(tmp_path):
     run(_valid_empty_universal_clears_existing(tmp_path))
 
@@ -202,7 +211,7 @@ async def _messages_arriving_during_analysis_are_preserved(tmp_path):
     task = asyncio.create_task(manager.analyze_and_learn("s1"))
     await provider.started.wait()
     new_message = {"sender": "c", "content": "three"}
-    await data_manager.add_message_to_history("s1", new_message)
+    data_manager.add_message_to_history("s1", new_message)
     provider.release.set()
 
     assert await task == LearnResult(True, "learned", changed=True)

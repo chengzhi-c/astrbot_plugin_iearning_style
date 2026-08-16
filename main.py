@@ -64,7 +64,7 @@ class IearningStylePlugin(Star):
             "timestamp": time.time(),
         }
 
-        await self.data_manager.add_message_to_history(session_id, message)
+        self.data_manager.add_message_to_history(session_id, message)
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req):
@@ -112,7 +112,7 @@ class IearningStylePlugin(Star):
             result = await self.learning_manager.analyze_and_learn(session_id)
             if not result.ok:
                 if result.code == "insufficient_history":
-                    min_history = self.config.get("min_history_for_analysis", 10)
+                    min_history = self.learning_manager.min_history
                     message = (
                         f"当前会话聊天记录不足 {min_history} 条，无法进行分析。"
                     )

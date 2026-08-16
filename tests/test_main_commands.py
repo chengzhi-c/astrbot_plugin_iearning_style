@@ -27,6 +27,7 @@ class FakeEvent:
 class FakeLearningManager:
     def __init__(self, result):
         self.result = result
+        self.min_history = 2
 
     async def analyze_and_learn(self, _session_id):
         return self.result

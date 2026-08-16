@@ -46,7 +46,7 @@ def _new_dm(tmp_path, **overrides):
 def test_replace_universal_marks_dirty(dm):
     run(_replace_universal_seq(dm))
     assert dm.universal["s1"][0]["content"] == "语气活泼"
-    assert dm._dirty_universal is True
+    assert "universal" in dm._dirty
 
 
 async def _replace_universal_seq(dm):
@@ -71,8 +71,8 @@ async def _proficiency_seq(dm):
 
 # ==================== 情境表征 ====================
 
-def test_add_contextual_fifo_eviction(dm):
-    dm.config["max_contextual_per_session"] = 3
+def test_add_contextual_fifo_eviction(tmp_path):
+    dm = _new_dm(tmp_path, max_contextual_per_session=3)
     run(_fifo_seq(dm))
     assert len(dm.contextual["s1"]) == 3
     scenes = [t["scene"] for t in dm.contextual["s1"]]
@@ -132,8 +132,8 @@ async def _increment_seq(dm):
     await asyncio.sleep(0)
 
 
-def test_check_specific_capacity_evicts_lowest(dm):
-    dm.config["max_specific_per_session"] = 3
+def test_check_specific_capacity_evicts_lowest(tmp_path):
+    dm = _new_dm(tmp_path, max_specific_per_session=3)
     run(_capacity_seq(dm))
     assert len(dm.specific["s1"]) == 3
     contents = [t["content"] for t in dm.specific["s1"]]
@@ -159,7 +159,7 @@ def test_replace_layer_writes_normalized(dm):
     normalized = [{"content": "测试", "proficiency": 50, "confirmed_rounds": 3}]
     run(_replace_layer_seq(dm, normalized))
     assert dm.universal["s1"] == normalized
-    assert dm._dirty_universal is True
+    assert "universal" in dm._dirty
 
 
 async def _replace_layer_seq(dm, normalized):
@@ -217,9 +217,11 @@ def test_handle_old_format_migrates_to_universal(tmp_path):
     contents = [t["content"] for t in dm.universal.get("s1", [])]
     assert "语气活泼" in contents
     assert "爱用短句" in contents
-    assert dm._dirty_universal is True
+    assert "universal" not in dm._dirty
     assert os.path.exists(os.path.join(str(tmp_path), "styles.json.migrated.bak"))
     assert not os.path.exists(os.path.join(str(tmp_path), "styles.json"))
+    with open(os.path.join(str(tmp_path), "universal.json"), encoding="utf-8") as f:
+        assert "语气活泼" in [item["content"] for item in json.load(f)["s1"]]
 
 
 def test_handle_old_format_handles_invalid_json(tmp_path):
@@ -227,7 +229,7 @@ def test_handle_old_format_handles_invalid_json(tmp_path):
         f.write("{invalid json")
 
     dm = _new_dm(tmp_path)
-    assert os.path.exists(os.path.join(str(tmp_path), "styles.json.bak"))
+    assert os.path.exists(os.path.join(str(tmp_path), "styles.json"))
     assert "s1" not in dm.universal
 
 
@@ -354,7 +356,7 @@ def test_save_failure_keeps_dirty_and_exits(dm, monkeypatch):
     monkeypatch.setattr("builtins.open", failing_open)
     run(_fail_seq(dm))
     monkeypatch.undo()
-    assert dm._dirty_universal is True  # 失败保留 dirty
+    assert "universal" in dm._dirty  # 失败保留 dirty
     assert dm._save_timer is None or dm._save_timer.done()  # 不挂死
 
 
@@ -405,7 +407,7 @@ def test_chat_history_capacity_keeps_recent(dm):
 
 async def _history_capacity_seq(dm):
     for i in range(510):
-        await dm.add_message_to_history("s1", {"seq": i})
+        dm.add_message_to_history("s1", {"seq": i})
 
 
 # ==================== S1: transactional learning ====================
@@ -486,5 +488,186 @@ def test_analysis_batch_missing_marker_does_not_consume(dm):
 
 async def _consume_analysis_batch(dm, marker):
     dm.consume_analysis_batch("s1", marker)
+    await asyncio.sleep(0)
+    await dm.force_save()
+
+
+# ==================== S2: durable persistence ====================
+
+def test_atomic_save_failure_keeps_previous_json(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    run(_seed_then_fail_atomic_save(dm, monkeypatch))
+
+    with open(dm.universal_file, encoding="utf-8") as f:
+        persisted = json.load(f)
+    assert [item["content"] for item in persisted["s1"]] == ["old"]
+    assert "universal" in dm._dirty
+    assert not os.path.exists(dm.universal_file + ".tmp")
+
+
+async def _seed_then_fail_atomic_save(dm, monkeypatch):
+    dm.replace_universal("s1", ["old"])
+    await dm.force_save()
+    dm.replace_universal("s1", ["new"])
+
+    real_replace = os.replace
+
+    def fail_target_replace(source, target):
+        if os.fspath(target) == dm.universal_file:
+            raise OSError("interrupted replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_target_replace)
+    assert await dm.force_save() is False
+
+
+def test_migration_write_failure_keeps_source(tmp_path, monkeypatch):
+    old_file = tmp_path / "styles.json"
+    old_file.write_text('{"s1": ["style"]}', encoding="utf-8")
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(DataManager, "_write_json_atomic", fail_write)
+    dm = _new_dm(tmp_path)
+
+    assert old_file.exists()
+    assert not (tmp_path / "styles.json.migrated.bak").exists()
+    assert "s1" not in dm.universal
+
+
+def test_wrong_root_shape_is_backed_up_and_not_loaded(tmp_path):
+    path = tmp_path / "universal.json"
+    path.write_text('[{"content": "bad root"}]', encoding="utf-8")
+
+    dm = _new_dm(tmp_path)
+
+    assert dm.universal == {}
+    assert not path.exists()
+    assert len(list(tmp_path.glob("universal.json.corrupt.*.bak"))) == 1
+
+
+def test_invalid_entries_are_backed_up_and_cleaned(tmp_path):
+    path = tmp_path / "universal.json"
+    path.write_text(
+        json.dumps({"s1": [{"content": "valid"}, {"content": 123}]}),
+        encoding="utf-8",
+    )
+
+    dm = _new_dm(tmp_path)
+
+    assert [item["content"] for item in dm.universal["s1"]] == ["valid"]
+    assert len(list(tmp_path.glob("universal.json.corrupt.*.bak"))) == 1
+    with path.open(encoding="utf-8") as f:
+        cleaned = json.load(f)
+    assert [item["content"] for item in cleaned["s1"]] == ["valid"]
+
+
+def test_valid_tmp_recovers_when_target_is_invalid(tmp_path):
+    target = tmp_path / "universal.json"
+    target.write_text("{invalid", encoding="utf-8")
+    tmp = tmp_path / "universal.json.tmp"
+    tmp.write_text(
+        json.dumps({"s1": [{"content": "recovered"}]}),
+        encoding="utf-8",
+    )
+
+    dm = _new_dm(tmp_path)
+
+    assert dm.universal["s1"][0]["content"] == "recovered"
+    assert not tmp.exists()
+
+
+def test_multifile_interruption_rolls_forward_on_restart(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    run(_interrupt_multifile_save(dm, monkeypatch))
+    monkeypatch.undo()
+
+    recovered = _new_dm(tmp_path)
+    assert recovered.universal["s1"][0]["content"] == "new universal"
+    assert recovered.contextual["s1"][0]["scene"] == "new scene"
+    assert not (tmp_path / ".save-transaction.json").exists()
+
+
+async def _interrupt_multifile_save(dm, monkeypatch):
+    dm.replace_universal("s1", ["new universal"])
+    dm.add_contextual("s1", "new scene", "new behavior")
+    await asyncio.sleep(0)
+
+    real_replace = os.replace
+    layer_replaces = 0
+
+    def fail_second_layer(source, target):
+        nonlocal layer_replaces
+        if os.path.basename(os.fspath(target)) in {
+            "universal.json",
+            "contextual.json",
+        }:
+            layer_replaces += 1
+            if layer_replaces == 2:
+                raise OSError("simulated process interruption")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_second_layer)
+    assert await dm.force_save() is False
+    assert (os.path.exists(dm.universal_file)) != (
+        os.path.exists(dm.contextual_file)
+    )
+    assert os.path.exists(os.path.join(dm.data_dir, ".save-transaction.json"))
+
+
+@pytest.mark.parametrize("target_layer", ["universal", "specific"])
+def test_contextual_merge_marks_every_changed_layer(tmp_path, target_layer):
+    dm = _new_dm(tmp_path)
+    text = "scene→behavior"
+    dm.contextual["s1"] = [{
+        "scene": "scene",
+        "behavior": "behavior",
+        "_in_buffer": True,
+    }]
+    if target_layer == "universal":
+        dm.universal["s1"] = [{"content": text, "proficiency": 10}]
+    else:
+        dm.specific["s1"] = [{
+            "content": text,
+            "trigger_regex": "scene",
+            "trigger_count": 1,
+        }]
+
+    run(_merge_and_save(dm))
+
+    reloaded = _new_dm(tmp_path)
+    assert reloaded.contextual["s1"] == []
+    if target_layer == "universal":
+        assert reloaded.universal["s1"][0]["proficiency"] == 15
+    else:
+        assert reloaded.specific["s1"][0]["trigger_count"] == 2
+
+
+async def _merge_and_save(dm):
+    dm.merge_contextual_buffer("s1")
+    assert "contextual" in dm._dirty
+    assert len(dm._dirty) == 2
+    assert await dm.force_save() is True
+
+
+def test_negative_capacities_fall_back_to_defaults(tmp_path):
+    dm = _new_dm(
+        tmp_path,
+        max_contextual_per_session=-1,
+        max_specific_per_session=-1,
+    )
+
+    run(_add_with_invalid_capacities(dm))
+
+    assert len(dm.contextual["s1"]) == 2
+    assert len(dm.specific["s1"]) == 2
+
+
+async def _add_with_invalid_capacities(dm):
+    dm.add_contextual("s1", "one", "one")
+    dm.add_contextual("s1", "two", "two")
+    dm.add_or_update_specific("s1", "one", "one")
+    dm.add_or_update_specific("s1", "two", "two")
     await asyncio.sleep(0)
     await dm.force_save()
