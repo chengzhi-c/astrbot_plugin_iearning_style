@@ -137,9 +137,9 @@ class IearningStylePlugin(Star):
 
             yield event.plain_result(response)
 
-        except Exception as e:
-            logger.error(f"手动触发学习分析失败: {e}")
-            yield event.plain_result(f"学习分析失败：{e}")
+        except Exception:
+            logger.exception("手动触发学习分析失败")
+            yield event.plain_result("学习分析失败：内部错误。")
 
     async def terminate(self):
         await self.scheduler.stop()

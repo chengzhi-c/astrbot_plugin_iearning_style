@@ -1,5 +1,5 @@
 /* =====================================================================
-   入乡随俗 · 风格管理 WebUI —  Design System / Stylesheet（V2 精炼版）
+   入乡随俗 · 风格管理 WebUI
    ---------------------------------------------------------------------
    设计原则
    1. 单一 token 源：颜色 / 字体 / 间距(4px 基准) / 圆角 / 阴影 / 动效
@@ -57,7 +57,7 @@
   --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
 
   /* 圆角 */
-  --r-1: 9px; --r-2: 13px; --r-3: 18px; --r-pill: 999px;
+  --r-1: 6px; --r-2: 8px; --r-3: 8px; --r-pill: 999px;
 
   /* 动效 */
   --t-fast: 140ms; --t: 240ms; --t-slow: 420ms;
@@ -471,7 +471,7 @@ a:hover { text-decoration: underline; }
 .stat:hover { transform: translateY(-3px); box-shadow: var(--sh-2); border-color: var(--c-border-strong); }
 .stat.total { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .stat .stat-inner { min-width: 0; }
-.stat-n { font-size: 28px; font-weight: 760; line-height: 1.1; letter-spacing: -.6px; font-variant-numeric: tabular-nums; }
+.stat-n { font-size: 28px; font-weight: 760; line-height: 1.1; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .stat-l { font-size: 12px; color: var(--c-text-2); margin-top: 4px; display: inline-flex; align-items: center; gap: 5px; }
 .stat-badge { margin-top: 12px; }
 
@@ -521,14 +521,7 @@ a:hover { text-decoration: underline; }
   text-align: center; padding: 48px 16px; color: var(--c-text-3);
   position: relative;
 }
-.empty-state::before {
-  content: ''; position: absolute; left: 50%; top: 28px; transform: translateX(-50%);
-  width: 160px; height: 90px; border-radius: 50%;
-  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--c-primary) 10%, transparent), transparent 70%);
-  pointer-events: none;
-}
 .empty-state.small { padding: 24px 12px; }
-.empty-state.small::before { display: none; }
 .empty-state .art { margin-bottom: 12px; opacity: .85; color: var(--c-text-3); position: relative; }
 .empty-state .es-title { font-size: 14.5px; color: var(--c-text-2); font-weight: 560; margin-bottom: 6px; position: relative; }
 .empty-state .es-desc { font-size: 13px; max-width: 400px; margin: 0 auto 16px; line-height: 1.65; position: relative; }

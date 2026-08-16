@@ -233,7 +233,7 @@ class LearningManager:
 
 5. specific 是"群里在用什么内部梗/暗号/流行语"——带释义，让外人也能理解。
    content 包含释义（如"xx（用于表达xxx）"），trigger_regex 是能匹配用户相关表达的正则。
-   trigger_regex 必须是合法正则。没有则留空。
+   trigger_regex 必须是合法且非空的正则；没有合法正则则不要输出该 specific 条目。
 
 示例输出：
 {{"universal": ["爱用表情包", "喜欢玩烂梗", "语气夸张"], "contextual": [{{"scene": "有人发消息", "behavior": "全员复读"}}, {{"scene": "群友自称萌新", "behavior": "假装也是萌新"}}], "specific": [{{"content": "xx（表达喜欢的意思）", "trigger_regex": "xx|x"}}]}}

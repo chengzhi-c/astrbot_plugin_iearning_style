@@ -95,8 +95,8 @@ class Scheduler:
         for session_id in self.data_manager.get_contextual_sessions():
             try:
                 self.data_manager.merge_contextual_buffer(session_id)
-            except Exception as e:
-                logger.error(f"维护会话 {session_id} 时出错: {e}")
+            except Exception:
+                logger.exception("周期维护处理会话时出错")
 
         if await self.data_manager.force_save():
             logger.info("风格维护完成（情境缓冲合并）。")

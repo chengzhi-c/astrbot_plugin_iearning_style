@@ -90,7 +90,7 @@ async function loadAll() {
   }
   store.snapshot = snap;
 
-  // 全局统计（旧后端无此接口时优雅降级）
+  // 统计接口失败时不阻断基础数据视图。
   try {
     const st = await Api.stats();
     store.injectOn = st.injection_enabled;

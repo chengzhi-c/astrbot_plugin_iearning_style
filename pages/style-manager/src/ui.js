@@ -1,5 +1,5 @@
 // ui.js — 设计系统 UI 组件层：Toast / 确认弹窗 / 骨架屏 / 空状态。
-// 所有组件保持纯渲染与状态自洽，不依赖业务视图；与 util.js 解耦后可独立复用。
+// 所有组件只依赖 DOM 工具和图标，不读取业务状态。
 
 import { $, el } from './util.js';
 import { icon, emptyArt } from './icons.js';

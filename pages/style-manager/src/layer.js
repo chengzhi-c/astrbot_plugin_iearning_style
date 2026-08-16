@@ -1,6 +1,5 @@
 // layer.js — 三层表征编辑视图：面板、行渲染、客户端校验、保存（整层替换）。
-// 数据模型与后端 web_ui.py 的 normalize_webui_entries 契约一致；
-// 保存成功后 emit('data-changed')，由 app.js 统一协调全局刷新。
+// 数据模型由后端 DataManager 统一规范化；保存结果通过回调交给 app.js 编排。
 
 import { store, LAYERS, revisionFor, acceptSavedLayer } from './store.js';
 import { Api } from './api.js';

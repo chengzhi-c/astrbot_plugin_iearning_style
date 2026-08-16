@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { unwrap } from '../../pages/style-manager/src/api.js';
@@ -82,4 +83,18 @@ test('layer validation catches empty and duplicate entries before save-all', () 
   assert.equal(validateLayer('universal').ok, false);
   store.model.specific = [{ content: 'meme', trigger_regex: '(' }];
   assert.equal(validateLayer('specific').ok, false);
+});
+
+
+test('css keeps compact radii and nonnegative letter spacing', async () => {
+  const css = await readFile(
+    new URL('../../pages/style-manager/styles.css', import.meta.url),
+    'utf8',
+  );
+  const radii = [...css.matchAll(/--r-[123]:\s*(\d+)px/g)]
+    .map((match) => Number(match[1]));
+
+  assert.equal(radii.length, 3);
+  assert.ok(radii.every((radius) => radius <= 8));
+  assert.doesNotMatch(css, /letter-spacing:\s*-/);
 });

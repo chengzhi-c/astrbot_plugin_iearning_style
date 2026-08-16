@@ -177,8 +177,8 @@ class StylePage:
             return error_response("缺少会话 ID")
         try:
             result = await self.learning_manager.analyze_and_learn(sid)
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"触发学习分析失败: {e}")
+        except Exception:  # noqa: BLE001
+            logger.exception("触发学习分析失败")
             return error_response(
                 "学习分析发生未知错误",
                 status_code=500,

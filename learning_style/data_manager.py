@@ -252,7 +252,7 @@ class DataManager:
                 if normalized is None:
                     changed = True
                     logger.warning(
-                        f"加载 {layer} 时跳过无效条目: session={session_id}, index={index}"
+                        f"加载 {layer} 时跳过无效条目: index={index}"
                     )
                     continue
                 normalized_entries.append(normalized)
@@ -498,10 +498,8 @@ class DataManager:
         # FIFO 容量检查
         max_capacity = self.max_contextual_per_session
         while len(self.contextual[session_id]) > max_capacity:
-            removed = self.contextual[session_id].pop(0)
-            logger.debug(
-                f"FIFO 淘汰情境表征: {removed.get('scene', '?')}→{removed.get('behavior', '?')}"
-            )
+            self.contextual[session_id].pop(0)
+            logger.debug("FIFO 淘汰一条情境表征")
 
         # 重新标记缓冲位（最新 20%）
         self._refresh_buffer_markers(session_id)
@@ -557,7 +555,7 @@ class DataManager:
                     if score > threshold:
                         u["proficiency"] = min(100, u.get("proficiency", 0) + 5)
                         merged = True
-                        logger.debug(f"情境 '{text}' 合并到通用 '{u['content']}'")
+                        logger.debug("一条情境表征已合并到通用层")
                         break
 
             if merged:
@@ -572,7 +570,7 @@ class DataManager:
                     if score > threshold:
                         s["trigger_count"] = s.get("trigger_count", 0) + 1
                         merged = True
-                        logger.debug(f"情境 '{text}' 合并到特定 '{s['content']}'")
+                        logger.debug("一条情境表征已合并到特定层")
                         break
 
             if not merged:
@@ -616,9 +614,7 @@ class DataManager:
         try:
             self.validate_trigger_regex(trigger_regex)
         except ValueError as exc:
-            logger.error(
-                f"特定表征 '{content}' 的正则无效，拒绝存储: {exc}"
-            )
+            logger.warning(f"拒绝存储无效特定表征正则: {exc}")
             return
 
         current_time = time.time()

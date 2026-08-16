@@ -33,6 +33,13 @@ class FakeLearningManager:
         return self.result
 
 
+class RaisingLearningManager:
+    min_history = 2
+
+    async def analyze_and_learn(self, _session_id):
+        raise RuntimeError("sensitive provider detail")
+
+
 class FakeDataManager:
     def __init__(self, save_result=True):
         self.save_result = save_result
@@ -101,3 +108,24 @@ def test_learn_command_does_not_claim_success_when_save_fails():
         )
     )
     assert outputs[-1] == "学习结果已更新，但保存失败；系统会自动重试。"
+
+
+def test_learn_command_hides_unexpected_exception_details():
+    plugin = SimpleNamespace(
+        learning_manager=RaisingLearningManager(),
+        data_manager=FakeDataManager(),
+        style_injector=FakeInjector(),
+        config={"min_history_for_analysis": 2},
+    )
+
+    outputs = run(_collect_plugin_output(plugin))
+
+    assert outputs[-1] == "学习分析失败：内部错误。"
+    assert "sensitive provider detail" not in outputs[-1]
+
+
+async def _collect_plugin_output(plugin):
+    return [
+        item
+        async for item in IearningStylePlugin.learn_now(plugin, FakeEvent())
+    ]
