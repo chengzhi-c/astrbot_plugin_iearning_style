@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { unwrap } from '../../pages/style-manager/src/api.js';
+import { Api, setBridge, unwrap } from '../../pages/style-manager/src/api.js';
 import { validateLayer } from '../../pages/style-manager/src/layer.js';
 import {
   acceptSavedLayer,
@@ -60,6 +60,21 @@ test('api unwrap keeps direct values and unwraps envelopes', () => {
 });
 
 
+test('api deduplicate posts the addressed session and unwraps counts', async () => {
+  let call;
+  setBridge({
+    async apiPost(path, body) {
+      call = { path, body };
+      return { status: 'ok', data: { total_removed: 2 } };
+    },
+  });
+
+  assert.deepEqual(await Api.deduplicate('s1'), { total_removed: 2 });
+  assert.deepEqual(call, { path: 'deduplicate', body: { sid: 's1' } });
+  setBridge(null);
+});
+
+
 test('donut segments retain semantic colors after zero filtering', () => {
   assert.deepEqual(donutSegments({ u: 0, c: 2, p: 3 }), [
     { key: 'contextual', value: 2 },
@@ -81,6 +96,19 @@ test('layer validation catches empty and duplicate entries before save-all', () 
   resetStore();
   store.model.universal = [{ content: 'same' }, { content: 'same' }];
   assert.equal(validateLayer('universal').ok, false);
+});
+
+
+test('specific validation allows same content with different regexes', () => {
+  resetStore();
+  store.model.specific = [
+    { content: 'same', trigger_regex: 'one' },
+    { content: 'same', trigger_regex: 'two' },
+  ];
+
+  assert.equal(validateLayer('specific').ok, true);
+  store.model.specific[1] = { content: ' ｓａｍｅ ', trigger_regex: 'one' };
+  assert.equal(validateLayer('specific').ok, false);
 });
 
 

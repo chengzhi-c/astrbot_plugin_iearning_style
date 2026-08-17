@@ -8,6 +8,7 @@ import { icon } from './icons.js';
 import { toast, emptyState } from './ui.js';
 
 const HINTS = Object.fromEntries(LAYERS.map((l) => [l.key, l.hint]));
+const dedupKey = (value) => value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
 
 /* ============ 脏数据 UI ============ */
 function updateDirtyUI() {
@@ -215,8 +216,10 @@ export function validateLayer(key) {
       return { ok: false, message: `第 ${i + 1} 条存在空字段` };
     }
     const identity = key === 'contextual'
-      ? `${entry.scene.trim()}\u0000${entry.behavior.trim()}`
-      : entry.content.trim();
+      ? `${dedupKey(entry.scene)}\u0000${dedupKey(entry.behavior)}`
+      : key === 'specific'
+        ? `${dedupKey(entry.content)}\u0000${entry.trigger_regex}`
+        : dedupKey(entry.content);
     if (seen.has(identity)) return { ok: false, message: `第 ${i + 1} 条与前面的条目重复` };
     seen.add(identity);
   }

@@ -10,6 +10,8 @@ Web API（前端经 window.AstrBotPluginPage 桥接调用，路由须以插件�
          → {"status": "ok", "data": {universal, contextual, specific}}
     POST /astrbot_plugin_iearning_style/layer
          body {"sid", "layer", "entries"} → {"status": "ok"} / 400
+    POST /astrbot_plugin_iearning_style/deduplicate
+         body {"sid"} → per-layer removal counts / 500
 """
 
 from typing import Any
@@ -90,6 +92,12 @@ class StylePage:
             self._learn_now,
             ["POST"],
             "手动触发某会话的学习分析（等价于聊天命令『学习总结』）",
+        )
+        self.context.register_web_api(
+            f"/{PLUGIN_NAME}/deduplicate",
+            self._deduplicate_session,
+            ["POST"],
+            "去除某会话三层表征中的确定性重复项",
         )
         self.context.register_web_api(
             f"/{PLUGIN_NAME}/clear",
@@ -201,6 +209,21 @@ class StylePage:
             "status": "ok",
             "data": {"learned": True, "changed": result.changed},
         })
+
+    async def _deduplicate_session(self):
+        payload = await request.json(default=None)
+        sid = self._sid_of(payload)
+        if not sid:
+            return error_response("缺少会话 ID")
+        try:
+            result = await self.data_manager.deduplicate_session(sid)
+        except OSError:
+            return error_response(
+                "去重结果保存失败，服务器数据未修改",
+                status_code=500,
+                data={"code": "save_failed"},
+            )
+        return json_response({"status": "ok", "data": result})
 
     async def _clear_session(self):
         payload = await request.json(default=None)

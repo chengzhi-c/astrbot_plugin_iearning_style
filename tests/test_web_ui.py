@@ -206,7 +206,7 @@ def test_layer_api_maps_revision_conflict(tmp_path):
     assert data_manager.universal["s1"][0]["content"] == "server"
 
 
-def test_registers_six_public_routes():
+def test_registers_seven_public_routes():
     context = RegisteringContext()
     page = web_ui.StylePage(context, FakeDataManager(), {"webui_enabled": True})
 
@@ -217,6 +217,7 @@ def test_registers_six_public_routes():
         (f"/{web_ui.PLUGIN_NAME}/layer", ["POST"]),
         (f"/{web_ui.PLUGIN_NAME}/stats", ["GET"]),
         (f"/{web_ui.PLUGIN_NAME}/learn", ["POST"]),
+        (f"/{web_ui.PLUGIN_NAME}/deduplicate", ["POST"]),
         (f"/{web_ui.PLUGIN_NAME}/clear", ["POST"]),
         (f"/{web_ui.PLUGIN_NAME}/export", ["POST"]),
     ]
@@ -262,6 +263,29 @@ def test_clear_api_is_durable(tmp_path):
     assert reloaded.universal["s1"] == []
     assert reloaded.contextual["s1"] == []
     assert reloaded.specific["s1"] == []
+
+
+def test_deduplicate_api_returns_counts_and_is_durable(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    data_manager.universal["s1"] = [
+        {"content": "A", "proficiency": 10},
+        {"content": "ａ", "proficiency": 20},
+    ]
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+    web_ui.request = FakeRequest({"sid": "s1"})
+
+    response = run(page._deduplicate_session())
+
+    assert response["body"] == {
+        "status": "ok",
+        "data": {
+            "removed": {"universal": 1, "contextual": 0, "specific": 0},
+            "total_removed": 1,
+            "specific_conflicts": 0,
+        },
+    }
+    reloaded = DataManager(str(tmp_path), {})
+    assert len(reloaded.universal["s1"]) == 1
 
 
 async def _seed_styles(data_manager):

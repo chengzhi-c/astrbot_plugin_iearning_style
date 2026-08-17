@@ -222,6 +222,45 @@ async function clearSession() {
   }
 }
 
+async function deduplicateSession() {
+  if (!store.sid) return;
+  if (isAnyDirty()) {
+    toast('请先保存或丢弃当前修改，再执行去重', 'error');
+    return;
+  }
+  const ok = await confirmModal({
+    title: '去重当前会话',
+    body: '将删除三层表征中的安全重复项；正则不同的特定表征会保留。确定继续吗？',
+    okText: '去重',
+    icon: 'copy',
+  });
+  if (!ok) return;
+
+  const btn = $('btnDeduplicate');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="btn-spin"></span> 去重中';
+  try {
+    const result = await Api.deduplicate(store.sid);
+    await refreshSnapshotOnly();
+    const removed = result.removed || {};
+    const total = result.total_removed || 0;
+    const conflicts = result.specific_conflicts || 0;
+    if (!total) {
+      toast(conflicts ? `未删除重复项，保留 ${conflicts} 条正则冲突` : '未发现重复项');
+      return;
+    }
+    const detail = `通用 ${removed.universal || 0}、情境 ${removed.contextual || 0}、特定 ${removed.specific || 0}`;
+    const suffix = conflicts ? `；保留 ${conflicts} 条正则冲突` : '';
+    toast(`已去重 ${total} 条（${detail}）${suffix}`);
+  } catch (e) {
+    toast('去重失败：' + (e && e.message ? e.message : e), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
 async function exportSession() {
   if (!store.sid) return;
   if (isAnyDirty()) toast('导出的是服务器已保存版本，不包含当前未保存修改');
@@ -329,6 +368,7 @@ function wireEvents() {
   });
 
   $('btnLearn').onclick = learnNow;
+  $('btnDeduplicate').onclick = deduplicateSession;
   $('btnClear').onclick = clearSession;
   $('btnExport').onclick = exportSession;
 

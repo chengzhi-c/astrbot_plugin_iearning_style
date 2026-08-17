@@ -49,7 +49,10 @@ function mockBridgeScript() {
       let counter = 1;
       const state = {
         universal: {
-          [sid]: [{ content: '原通用', proficiency: 10, confirmed_rounds: 1, last_updated: 2 }],
+          [sid]: [
+            { content: '原通用', proficiency: 10, confirmed_rounds: 1, last_updated: 2 },
+            { content: ' 原通用 ', proficiency: 12, confirmed_rounds: 2, last_updated: 3 },
+          ],
           [other]: [],
         },
         contextual: {
@@ -71,6 +74,7 @@ function mockBridgeScript() {
       let context = { isDark: false, locale: 'zh-CN' };
       window.__MOCK = state;
       window.__LAYER_CALLS = [];
+      window.__DEDUP_CALLS = [];
       window.__setTheme = (isDark) => {
         context = { ...context, isDark };
         contextHandlers.forEach((handler) => handler(clone(context)));
@@ -101,6 +105,15 @@ function mockBridgeScript() {
           if (path === 'clear') {
             for (const layer of ['universal', 'contextual', 'specific']) state[layer][body.sid] = [];
             return { status: 'ok', data: { cleared: true } };
+          }
+          if (path === 'deduplicate') {
+            window.__DEDUP_CALLS.push(body.sid);
+            state.universal[body.sid] = state.universal[body.sid].slice(0, 1);
+            return { status: 'ok', data: {
+              removed: { universal: 1, contextual: 0, specific: 0 },
+              total_removed: 1,
+              specific_conflicts: 0,
+            } };
           }
           if (path === 'learn') return { status: 'ok', data: { learned: true } };
           if (path === 'export') return { status: 'ok', data: { sid: body.sid } };
@@ -142,6 +155,12 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     assert.ok(frame);
     await frame.waitForSelector('#curSid');
     assert.equal(await frame.locator('#curSid').textContent(), 'a:test');
+
+    await frame.getByRole('button', { name: '去重本会话' }).click();
+    assert.match(await frame.locator('#mBody').textContent(), /安全重复/);
+    await frame.locator('#mOk').click();
+    await frame.waitForFunction(() => window.__MOCK.universal['a:test'].length === 1);
+    assert.deepEqual(await frame.evaluate(() => window.__DEDUP_CALLS), ['a:test']);
 
     await frame.evaluate(() => window.__setTheme(true));
     await frame.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
@@ -186,6 +205,8 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     await frame.getByPlaceholder('风格描述，如：语气活泼、爱用短句').first().fill('新通用');
     await frame.getByRole('tab', { name: '情境' }).click();
     await frame.getByPlaceholder('场景，如：有人发消息').first().fill('新场景');
+    await frame.getByRole('button', { name: '去重本会话' }).click();
+    assert.deepEqual(await frame.evaluate(() => window.__DEDUP_CALLS), ['a:test']);
     await frame.getByRole('button', { name: '保存全部' }).click();
     await frame.waitForFunction(() => !document.querySelector('#dirtyBanner').classList.contains('show'));
     assert.deepEqual(await frame.evaluate(() => ({

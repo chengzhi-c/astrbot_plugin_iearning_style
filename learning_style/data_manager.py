@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import time
+import unicodedata
 from functools import lru_cache
 from typing import Any
 
@@ -169,6 +170,103 @@ class DataManager:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
             return default
         return value
+
+    @staticmethod
+    def _dedup_key(value: str) -> str:
+        normalized = unicodedata.normalize("NFKC", value).casefold()
+        return " ".join(normalized.split())
+
+    @staticmethod
+    def _earliest_timestamp(*values: Any) -> int | float:
+        valid = [
+            value
+            for value in values
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        ]
+        return min(valid, default=0)
+
+    def _deduplicate_entries(
+        self, layer: str, entries: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        deduplicated: list[dict[str, Any]] = []
+        seen: dict[Any, dict[str, Any]] = {}
+        specific_patterns: dict[str, set[str]] = {}
+        removed = 0
+        specific_conflicts = 0
+
+        for source in entries:
+            entry = copy.deepcopy(source)
+            if layer == "universal":
+                entry["content"] = entry["content"].strip()
+                key = self._dedup_key(entry["content"])
+                previous = seen.get(key)
+                if previous is None:
+                    seen[key] = entry
+                    deduplicated.append(entry)
+                    continue
+                previous["proficiency"] = max(
+                    previous.get("proficiency", 10),
+                    entry.get("proficiency", 10),
+                )
+                previous["confirmed_rounds"] = max(
+                    previous.get("confirmed_rounds", 1),
+                    entry.get("confirmed_rounds", 1),
+                )
+                previous["last_updated"] = max(
+                    previous.get("last_updated", 0),
+                    entry.get("last_updated", 0),
+                )
+                removed += 1
+                continue
+
+            if layer == "contextual":
+                entry["scene"] = entry["scene"].strip()
+                entry["behavior"] = entry["behavior"].strip()
+                key = (
+                    self._dedup_key(entry["scene"]),
+                    self._dedup_key(entry["behavior"]),
+                )
+                previous = seen.get(key)
+                if previous is None:
+                    seen[key] = entry
+                    deduplicated.append(entry)
+                    continue
+                previous["created_at"] = self._earliest_timestamp(
+                    previous.get("created_at"), entry.get("created_at")
+                )
+                removed += 1
+                continue
+
+            entry["content"] = entry["content"].strip()
+            content_key = self._dedup_key(entry["content"])
+            pattern = entry["trigger_regex"]
+            patterns = specific_patterns.setdefault(content_key, set())
+            if patterns and pattern not in patterns:
+                specific_conflicts += 1
+            patterns.add(pattern)
+            key = (content_key, pattern)
+            previous = seen.get(key)
+            if previous is None:
+                seen[key] = entry
+                deduplicated.append(entry)
+                continue
+            previous["trigger_count"] = max(
+                previous.get("trigger_count", 1),
+                entry.get("trigger_count", 1),
+            )
+            previous["first_seen"] = self._earliest_timestamp(
+                previous.get("first_seen"), entry.get("first_seen")
+            )
+            previous["last_seen"] = max(
+                previous.get("last_seen", 0), entry.get("last_seen", 0)
+            )
+            removed += 1
+
+        if layer == "contextual":
+            self._set_buffer_markers(deduplicated)
+        return deduplicated, removed, specific_conflicts
 
     def _normalize_entry(self, layer: str, item: Any) -> dict[str, Any] | None:
         if not isinstance(item, dict):
@@ -426,14 +524,23 @@ class DataManager:
         self, session_id: str, contents: list[str]
     ) -> list[dict[str, Any]]:
         current_time = time.time()
-        old_map = {}
-        for trait in self.universal.get(session_id, []):
-            old_map[trait["content"]] = trait
+        old_traits, _, _ = self._deduplicate_entries(
+            "universal", self.universal.get(session_id, [])
+        )
+        old_map = {
+            self._dedup_key(trait["content"]): trait for trait in old_traits
+        }
 
         new_traits = []
-        for content in contents:
-            if content in old_map:
-                old = old_map[content]
+        seen = set()
+        for raw_content in contents:
+            content = raw_content.strip()
+            key = self._dedup_key(content)
+            if key in seen:
+                continue
+            seen.add(key)
+            if key in old_map:
+                old = old_map[key]
                 new_traits.append({
                     "content": content,
                     "proficiency": min(100, old.get("proficiency", 0) + 5),
@@ -609,6 +716,7 @@ class DataManager:
     def add_or_update_specific(
         self, session_id: str, content: str, trigger_regex: str
     ):
+        content = content.strip()
         try:
             self.validate_trigger_regex(trigger_regex)
         except ValueError as exc:
@@ -619,8 +727,12 @@ class DataManager:
         if session_id not in self.specific:
             self.specific[session_id] = []
 
+        content_key = self._dedup_key(content)
         for trait in self.specific[session_id]:
-            if trait["content"] == content:
+            if (
+                self._dedup_key(trait["content"]) == content_key
+                and trait.get("trigger_regex", "") == trigger_regex
+            ):
                 trait["trigger_count"] = trait.get("trigger_count", 0) + 1
                 trait["last_seen"] = current_time
                 self._mark_dirty("specific")
@@ -668,9 +780,14 @@ class DataManager:
     def get_injection_data(
         self, session_id: str, user_message: str = ""
     ) -> dict[str, Any]:
-        universal = copy.deepcopy(self.universal.get(session_id, []))
-        contextual = copy.deepcopy(self.contextual.get(session_id, []))
+        universal, _, _ = self._deduplicate_entries(
+            "universal", self.universal.get(session_id, [])
+        )
+        contextual, _, _ = self._deduplicate_entries(
+            "contextual", self.contextual.get(session_id, [])
+        )
         hit_contents = []
+        hit_keys = set()
         specific = self.specific.get(session_id, [])
         if (
             not specific
@@ -712,7 +829,10 @@ class DataManager:
                 continue
             if matched is None:
                 continue
-            hit_contents.append(trait["content"])
+            content_key = self._dedup_key(trait["content"])
+            if content_key not in hit_keys:
+                hit_keys.add(content_key)
+                hit_contents.append(trait["content"])
             trait["trigger_count"] = trait.get("trigger_count", 0) + 1
             trait["last_seen"] = now
 
@@ -737,7 +857,7 @@ class DataManager:
         for content in payload["universal"]:
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("universal entries must be non-empty strings")
-            universal_contents.append(content)
+            universal_contents.append(content.strip())
 
         contextual_items = []
         for item in payload["contextual"]:
@@ -749,7 +869,7 @@ class DataManager:
                 raise ValueError("contextual scene must be a non-empty string")
             if not isinstance(behavior, str) or not behavior.strip():
                 raise ValueError("contextual behavior must be a non-empty string")
-            contextual_items.append((scene, behavior))
+            contextual_items.append((scene.strip(), behavior.strip()))
 
         specific_items = []
         for item in payload["specific"]:
@@ -760,7 +880,7 @@ class DataManager:
             if not isinstance(content, str) or not content.strip():
                 raise ValueError("specific content must be a non-empty string")
             self.validate_trigger_regex(trigger_regex)
-            specific_items.append((content, trigger_regex))
+            specific_items.append((content.strip(), trigger_regex))
 
         now = time.time()
         new_universal = self._build_universal_traits(
@@ -777,6 +897,9 @@ class DataManager:
             }
             for scene, behavior in contextual_items
         )
+        new_contextual, _, _ = self._deduplicate_entries(
+            "contextual", new_contextual
+        )
         max_contextual = self.max_contextual_per_session
         if len(new_contextual) > max_contextual:
             new_contextual = new_contextual[-max_contextual:]
@@ -784,12 +907,17 @@ class DataManager:
 
         new_specific = copy.deepcopy(self.specific.get(session_id, []))
         for content, trigger_regex in specific_items:
+            content_key = self._dedup_key(content)
             existing = next(
-                (item for item in new_specific if item.get("content") == content),
+                (
+                    item
+                    for item in new_specific
+                    if self._dedup_key(item.get("content", "")) == content_key
+                    and item.get("trigger_regex", "") == trigger_regex
+                ),
                 None,
             )
             if existing is not None:
-                existing["trigger_regex"] = trigger_regex
                 continue
             new_specific.append({
                 "content": content,
@@ -798,6 +926,10 @@ class DataManager:
                 "first_seen": now,
                 "last_seen": now,
             })
+
+        new_specific, _, _ = self._deduplicate_entries(
+            "specific", new_specific
+        )
 
         max_specific = self.max_specific_per_session
         if len(new_specific) > max_specific:
@@ -873,7 +1005,9 @@ class DataManager:
                 return True
             return self._save_transaction(layers)
 
-    def _save_transaction(self, layers: list[str]) -> bool:
+    def _save_transaction(
+        self, layers: list[str], stores: dict[str, Any] | None = None
+    ) -> bool:
         transaction_id = time.time_ns()
         entries = []
         try:
@@ -881,7 +1015,8 @@ class DataManager:
                 target = self._layer_files[layer]
                 temp_name = f"{os.path.basename(target)}.txn.{transaction_id}.tmp"
                 temp_path = os.path.join(self.data_dir, temp_name)
-                self._write_json_file(temp_path, getattr(self, layer))
+                data = stores[layer] if stores is not None else getattr(self, layer)
+                self._write_json_file(temp_path, data)
                 entries.append({
                     "layer": layer,
                     "temp": temp_name,
@@ -1035,6 +1170,56 @@ class DataManager:
             self.specific[session_id] = []
             self._mark_dirty("specific")
 
+    async def deduplicate_session(self, session_id: str) -> dict[str, Any]:
+        """Safely remove deterministic duplicates from one session."""
+        async with self._save_lock:
+            if not self._recover_save_transaction():
+                raise OSError("存在无法恢复的保存事务")
+
+            removed = {layer: 0 for layer in ("universal", "contextual", "specific")}
+            specific_conflicts = 0
+            updated_stores: dict[str, Any] = {}
+            for layer in removed:
+                current = getattr(self, layer).get(session_id, [])
+                deduplicated, removed_count, conflicts = self._deduplicate_entries(
+                    layer, current
+                )
+                removed[layer] = removed_count
+                if layer == "specific":
+                    specific_conflicts = conflicts
+                if deduplicated == current:
+                    continue
+                updated = copy.deepcopy(getattr(self, layer))
+                updated[session_id] = deduplicated
+                updated_stores[layer] = updated
+
+            layers = [
+                layer
+                for layer in ("universal", "contextual", "specific")
+                if layer in updated_stores
+            ]
+            if len(layers) == 1:
+                layer = layers[0]
+                self._write_json_atomic(
+                    self._layer_files[layer], updated_stores[layer]
+                )
+            elif layers and not self._save_transaction(layers, updated_stores):
+                if (
+                    not os.path.exists(self.transaction_file)
+                    or not self._recover_save_transaction()
+                ):
+                    raise OSError("去重结果保存失败")
+
+            for layer in layers:
+                setattr(self, layer, updated_stores[layer])
+            self._dirty.difference_update(layers)
+
+            return {
+                "removed": removed,
+                "total_removed": sum(removed.values()),
+                "specific_conflicts": specific_conflicts,
+            }
+
     def export_session(self, session_id: str) -> dict[str, Any]:
         """导出某会话的三层表征（供 WebUI 下载，剔除内部缓冲标记）。"""
         contextual = [
@@ -1049,13 +1234,15 @@ class DataManager:
         }
 
     @staticmethod
-    def _required_field(item: Any, key: str, index: int) -> str:
+    def _required_field(
+        item: Any, key: str, index: int, *, strip: bool = True
+    ) -> str:
         if not isinstance(item, dict):
             raise ValueError(f"第 {index + 1} 条格式错误，应为对象")
         value = item.get(key)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"第 {index + 1} 条缺少有效字段 {key}")
-        return value.strip()
+        return value.strip() if strip else value
 
     def _normalize_layer_replacement(
         self, session_id: str, layer: str, entries: Any
@@ -1075,13 +1262,16 @@ class DataManager:
                     f"条目数 {len(entries)} 超过通用表征容量上限 "
                     f"{MAX_UNIVERSAL_PER_SESSION}"
                 )
-            old = {item["content"]: item for item in current}
+            old = {
+                self._dedup_key(item["content"]): item for item in current
+            }
             for index, item in enumerate(entries):
                 content = self._required_field(item, "content", index)
-                if content in seen:
+                key = self._dedup_key(content)
+                if key in seen:
                     raise ValueError(f"第 {index + 1} 条与前面的条目重复")
-                seen.add(content)
-                previous = old.get(content, {})
+                seen.add(key)
+                previous = old.get(key, {})
                 normalized.append({
                     "content": content,
                     "proficiency": previous.get("proficiency", 10),
@@ -1097,12 +1287,16 @@ class DataManager:
                     f"{self.max_contextual_per_session}"
                 )
             old = {
-                (item["scene"], item["behavior"]): item for item in current
+                (
+                    self._dedup_key(item["scene"]),
+                    self._dedup_key(item["behavior"]),
+                ): item
+                for item in current
             }
             for index, item in enumerate(entries):
                 scene = self._required_field(item, "scene", index)
                 behavior = self._required_field(item, "behavior", index)
-                key = (scene, behavior)
+                key = (self._dedup_key(scene), self._dedup_key(behavior))
                 if key in seen:
                     raise ValueError(f"第 {index + 1} 条与前面的条目重复")
                 seen.add(key)
@@ -1120,15 +1314,28 @@ class DataManager:
                 f"条目数 {len(entries)} 超过特定表征容量上限 "
                 f"{self.max_specific_per_session}"
             )
-        old = {item["content"]: item for item in current}
+        old_entries, _, _ = self._deduplicate_entries("specific", current)
+        old_exact = {}
+        old_by_content: dict[str, list[dict[str, Any]]] = {}
+        for item in old_entries:
+            content_key = self._dedup_key(item["content"])
+            old_exact[(content_key, item["trigger_regex"])] = item
+            old_by_content.setdefault(content_key, []).append(item)
         for index, item in enumerate(entries):
             content = self._required_field(item, "content", index)
-            trigger_regex = self._required_field(item, "trigger_regex", index)
-            if content in seen:
+            trigger_regex = self._required_field(
+                item, "trigger_regex", index, strip=False
+            )
+            content_key = self._dedup_key(content)
+            key = (content_key, trigger_regex)
+            if key in seen:
                 raise ValueError(f"第 {index + 1} 条与前面的条目重复")
-            seen.add(content)
+            seen.add(key)
             self.validate_trigger_regex(trigger_regex)
-            previous = old.get(content, {})
+            previous = old_exact.get(key)
+            if previous is None:
+                candidates = old_by_content.get(content_key, [])
+                previous = candidates[0] if len(candidates) == 1 else {}
             normalized.append({
                 "content": content,
                 "trigger_regex": trigger_regex,

@@ -126,10 +126,34 @@ def test_add_or_update_specific_increments_trigger_count(dm):
     assert dm.specific["s1"][0]["trigger_count"] == 2
 
 
+def test_add_or_update_specific_keeps_different_regex(dm):
+    run(_different_specific_regex_seq(dm))
+
+    assert len(dm.specific["s1"]) == 2
+
+
+def test_add_or_update_specific_preserves_regex_whitespace(dm):
+    run(_specific_regex_whitespace_seq(dm))
+
+    assert dm.specific["s1"][0]["trigger_regex"] == " hello"
+
+
+async def _specific_regex_whitespace_seq(dm):
+    dm.add_or_update_specific("s1", "梗", " hello")
+    await asyncio.sleep(0)
+
+
 async def _increment_seq(dm):
     dm.add_or_update_specific("s1", "梗", "梗")
     await asyncio.sleep(0)
     dm.add_or_update_specific("s1", "梗", "梗")
+    await asyncio.sleep(0)
+
+
+async def _different_specific_regex_seq(dm):
+    dm.add_or_update_specific("s1", "RJW", "(?i)rjw")
+    await asyncio.sleep(0)
+    dm.add_or_update_specific("s1", "ｒｊｗ", "rjw")
     await asyncio.sleep(0)
 
 
@@ -166,6 +190,36 @@ def test_replace_layer_normalizes_and_persists(dm):
 async def _replace_layer_seq(dm, entries):
     base_revision = dm.layer_revision("s1", "universal")
     await dm.replace_layer("s1", "universal", entries, base_revision)
+
+
+def test_replace_layer_rejects_normalized_duplicate(tmp_path):
+    dm = _new_dm(tmp_path)
+    revision = dm.layer_revision("s1", "universal")
+
+    with pytest.raises(ValueError, match="重复"):
+        run(dm.replace_layer(
+            "s1",
+            "universal",
+            [{"content": " 风格Ａ "}, {"content": "风格a"}],
+            revision,
+        ))
+
+
+def test_replace_specific_keeps_same_content_with_different_regex(tmp_path):
+    dm = _new_dm(tmp_path)
+    revision = dm.layer_revision("s1", "specific")
+
+    result = run(dm.replace_layer(
+        "s1",
+        "specific",
+        [
+            {"content": "RJW", "trigger_regex": "(?i)rjw"},
+            {"content": "ｒｊｗ", "trigger_regex": "rjw"},
+        ],
+        revision,
+    ))
+
+    assert len(result["entries"]) == 2
 
 
 # ==================== _schedule_save race 回归 ====================
@@ -431,7 +485,7 @@ def test_apply_learning_result_is_transactional(dm):
     assert (dm.universal, dm.contextual, dm.specific) == before
 
 
-def test_apply_learning_result_updates_regex_without_resetting_stats(dm):
+def test_apply_learning_result_keeps_same_content_with_different_regex(dm):
     dm.specific["s1"] = [{
         "content": "梗",
         "trigger_regex": "old",
@@ -442,16 +496,198 @@ def test_apply_learning_result_updates_regex_without_resetting_stats(dm):
     payload = {
         "universal": [],
         "contextual": [],
-        "specific": [{"content": "梗", "trigger_regex": "new"}],
+        "specific": [{"content": "梗", "trigger_regex": " new "}],
     }
 
     run(_apply_learning_result(dm, payload))
 
-    trait = dm.specific["s1"][0]
-    assert trait["trigger_regex"] == "new"
-    assert trait["trigger_count"] == 9
-    assert trait["first_seen"] == 10
-    assert trait["last_seen"] == 20
+    assert len(dm.specific["s1"]) == 2
+    old, new = dm.specific["s1"]
+    assert old["trigger_regex"] == "old"
+    assert old["trigger_count"] == 9
+    assert old["first_seen"] == 10
+    assert old["last_seen"] == 20
+    assert new["trigger_regex"] == " new "
+    assert new["trigger_count"] == 1
+
+
+def test_apply_learning_result_deduplicates_normalized_entries(dm):
+    dm.universal["s1"] = [{
+        "content": "RJW",
+        "proficiency": 30,
+        "confirmed_rounds": 4,
+        "last_updated": 10,
+    }]
+    dm.contextual["s1"] = [{
+        "scene": "问候",
+        "behavior": "回应",
+        "created_at": 10,
+        "_in_buffer": False,
+    }]
+    dm.specific["s1"] = [{
+        "content": "RJW",
+        "trigger_regex": "(?i)rjw",
+        "trigger_count": 9,
+        "first_seen": 10,
+        "last_seen": 20,
+    }]
+    payload = {
+        "universal": ["ＲＪＷ", " rjw "],
+        "contextual": [
+            {"scene": " 问候", "behavior": "回应 "},
+            {"scene": "问候", "behavior": "回应"},
+        ],
+        "specific": [
+            {"content": "ｒｊｗ", "trigger_regex": "(?i)rjw"},
+            {"content": " RJW ", "trigger_regex": "(?i)rjw"},
+        ],
+    }
+
+    run(_apply_learning_result(dm, payload))
+
+    assert len(dm.universal["s1"]) == 1
+    assert dm.universal["s1"][0]["proficiency"] == 35
+    assert dm.universal["s1"][0]["confirmed_rounds"] == 5
+    assert len(dm.contextual["s1"]) == 1
+    assert len(dm.specific["s1"]) == 1
+    assert dm.specific["s1"][0]["trigger_count"] == 9
+
+
+def test_deduplicate_session_merges_safe_duplicates_and_persists(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [
+        {
+            "content": " 风格Ａ ",
+            "proficiency": 10,
+            "confirmed_rounds": 1,
+            "last_updated": 10,
+        },
+        {
+            "content": "风格a",
+            "proficiency": 30,
+            "confirmed_rounds": 4,
+            "last_updated": 20,
+        },
+    ]
+    dm.contextual["s1"] = [
+        {"scene": " 问候 ", "behavior": "回应", "created_at": 20},
+        {"scene": "问候", "behavior": " 回应 ", "created_at": 10},
+    ]
+    dm.specific["s1"] = [
+        {
+            "content": " RJW ",
+            "trigger_regex": "(?i)rjw",
+            "trigger_count": 2,
+            "first_seen": 20,
+            "last_seen": 30,
+        },
+        {
+            "content": "ｒｊｗ",
+            "trigger_regex": "(?i)rjw",
+            "trigger_count": 5,
+            "first_seen": 10,
+            "last_seen": 40,
+        },
+        {
+            "content": "rjw",
+            "trigger_regex": "rjw",
+            "trigger_count": 1,
+            "first_seen": 15,
+            "last_seen": 25,
+        },
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result == {
+        "removed": {"universal": 1, "contextual": 1, "specific": 1},
+        "total_removed": 3,
+        "specific_conflicts": 1,
+    }
+    assert dm.universal["s1"][0]["content"] == "风格Ａ"
+    assert dm.universal["s1"][0]["proficiency"] == 30
+    assert dm.universal["s1"][0]["confirmed_rounds"] == 4
+    assert dm.contextual["s1"][0]["created_at"] == 10
+    assert len(dm.specific["s1"]) == 2
+    assert dm.specific["s1"][0]["trigger_count"] == 5
+    assert dm.specific["s1"][0]["first_seen"] == 10
+    assert dm.specific["s1"][0]["last_seen"] == 40
+
+    reloaded = _new_dm(tmp_path)
+    assert reloaded.get_session_layers("s1") == dm.get_session_layers("s1")
+
+
+def test_deduplicate_session_keeps_regex_whitespace_semantics(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {"content": "RJW", "trigger_regex": "rjw", "trigger_count": 1},
+        {"content": " ｒｊｗ ", "trigger_regex": " rjw", "trigger_count": 2},
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["removed"]["specific"] == 0
+    assert result["specific_conflicts"] == 1
+    assert [item["trigger_regex"] for item in dm.specific["s1"]] == [
+        "rjw", " rjw"
+    ]
+
+def test_deduplicate_session_does_not_publish_when_save_fails(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [
+        {"content": "A", "proficiency": 10},
+        {"content": "ａ", "proficiency": 20},
+    ]
+    dm.contextual["s1"] = [
+        {"scene": "S", "behavior": "B"},
+        {"scene": "ｓ", "behavior": "ｂ"},
+    ]
+    before = copy.deepcopy(dm.get_session_layers("s1"))
+
+    monkeypatch.setattr(
+        dm,
+        "_write_json_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(OSError):
+        run(dm.deduplicate_session("s1"))
+
+    assert dm.get_session_layers("s1") == before
+
+
+def test_deduplicate_session_rolls_forward_partial_transaction(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [
+        {"content": "A", "proficiency": 10},
+        {"content": "ａ", "proficiency": 20},
+    ]
+    dm.contextual["s1"] = [
+        {"scene": "S", "behavior": "B"},
+        {"scene": "ｓ", "behavior": "ｂ"},
+    ]
+    real_replace = os.replace
+    layer_replaces = 0
+
+    def fail_second_layer_once(source, target):
+        nonlocal layer_replaces
+        if os.path.basename(os.fspath(target)) in {
+            "universal.json",
+            "contextual.json",
+        }:
+            layer_replaces += 1
+            if layer_replaces == 2:
+                raise OSError("simulated interruption")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_second_layer_once)
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["total_removed"] == 2
+    assert len(dm.universal["s1"]) == 1
+    assert len(dm.contextual["s1"]) == 1
+    assert not os.path.exists(dm.transaction_file)
 
 
 async def _apply_learning_result(dm, payload):
@@ -714,6 +950,50 @@ async def _hit_and_save(dm):
     assert await dm.force_save() is True
 
 
+def test_specific_conflicts_inject_content_once(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {
+            "content": "RJW",
+            "trigger_regex": "rjw",
+            "trigger_count": 1,
+        },
+        {
+            "content": "ｒｊｗ",
+            "trigger_regex": "(?i)rjw",
+            "trigger_count": 1,
+        },
+    ]
+
+    injection = run(_specific_conflict_injection(dm))
+
+    assert injection["specific"] == ["RJW"]
+    assert [item["trigger_count"] for item in dm.specific["s1"]] == [2, 2]
+
+
+def test_injection_deduplicates_existing_universal_and_contextual(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.universal["s1"] = [
+        {"content": "Style"},
+        {"content": " ｓｔｙｌｅ "},
+    ]
+    dm.contextual["s1"] = [
+        {"scene": "Scene", "behavior": "Reply"},
+        {"scene": " ｓｃｅｎｅ ", "behavior": " reply "},
+    ]
+
+    injection = dm.get_injection_data("s1")
+
+    assert [item["content"] for item in injection["universal"]] == ["Style"]
+    assert len(injection["contextual"]) == 1
+
+
+async def _specific_conflict_injection(dm):
+    injection = dm.get_injection_data("s1", "rjw")
+    await asyncio.sleep(0)
+    return injection
+
+
 def test_oversized_message_skips_specific_matching(tmp_path):
     dm = _new_dm(tmp_path)
     dm.specific["s1"] = [{
@@ -770,6 +1050,41 @@ def test_layer_write_failure_keeps_memory_and_revision(tmp_path, monkeypatch):
 
     assert dm.universal == before
     assert dm.layer_revision("s1", "universal") == revision
+
+
+def test_specific_layer_save_preserves_stats_per_regex(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {
+            "content": "梗",
+            "trigger_regex": "old-a",
+            "trigger_count": 3,
+            "first_seen": 1,
+            "last_seen": 2,
+        },
+        {
+            "content": "梗",
+            "trigger_regex": "old-b",
+            "trigger_count": 7,
+            "first_seen": 4,
+            "last_seen": 8,
+        },
+    ]
+    base_revision = dm.layer_revision("s1", "specific")
+
+    result = run(dm.replace_layer(
+        "s1",
+        "specific",
+        [
+            {"content": "梗", "trigger_regex": "old-a"},
+            {"content": "梗", "trigger_regex": "old-b"},
+        ],
+        base_revision,
+    ))
+
+    assert [entry["trigger_count"] for entry in result["entries"]] == [3, 7]
+    assert [entry["first_seen"] for entry in result["entries"]] == [1, 4]
+    assert [entry["last_seen"] for entry in result["entries"]] == [2, 8]
 
 
 def test_layer_save_returns_normalized_entries_and_new_revision(tmp_path):

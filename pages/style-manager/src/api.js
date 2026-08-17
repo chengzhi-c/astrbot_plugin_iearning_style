@@ -1,7 +1,7 @@
 // api.js — 对 window.AstrBotPluginPage 桥接的封装（API 契约层）。
 // 路由与后端 web_ui.py 保持一致（以插件名前缀开头）：
 //   GET  snapshot / stats
-//   POST layer / learn / clear / export
+//   POST layer / learn / deduplicate / clear / export
 // 桥接返回结构可能是 {status, data} 包裹，也可能是直接数据，统一在此解包。
 // ⚠️ 此文件是前后端衔接的契约边界，修改路由/字段需同步后端。
 
@@ -42,6 +42,7 @@ export const Api = {
     }));
   },
   async learn(sid) { return post('learn', { sid }); },
+  async deduplicate(sid) { return unwrap(await post('deduplicate', { sid })); },
   async clear(sid) { return post('clear', { sid }); },
   // 导出返回原始结果（可能为包裹结构），由调用方二次解包。
   async exportSession(sid) { return post('export', { sid }); },
