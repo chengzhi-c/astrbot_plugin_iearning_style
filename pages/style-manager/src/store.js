@@ -20,7 +20,7 @@ export const LAYERS = [
   {
     key: 'specific', name: '特定', color: 'var(--c-specific)',
     soft: 'var(--c-specific-soft)',
-    hint: '群内梗与释义。trigger_regex 命中用户消息时该梗才会被注入回复（按需注入，prompt 不膨胀）；正则非法时该层拒绝保存并提示具体条目。',
+    hint: '群内梗与释义。trigger_regex 命中用户消息时该梗才会被注入回复（按需注入，prompt 不膨胀）；保存时由服务端校验正则语法并提示具体条目。',
     icon: 'hash',
   },
 ];

@@ -151,6 +151,24 @@ def test_webui_and_learning_share_regex_validation(tmp_path, pattern):
     assert response["body"]["status"] == "error"
 
 
+def test_webui_accepts_python_inline_regex_flags(tmp_path):
+    data_manager = DataManager(str(tmp_path), {})
+    pattern = "(?i)rjw"
+    base_revision = data_manager.layer_revision("s1", "specific")
+    web_ui.request = FakeRequest({
+        "sid": "s1",
+        "layer": "specific",
+        "entries": [{"content": "RJW", "trigger_regex": pattern}],
+        "base_revision": base_revision,
+    })
+    page = web_ui.StylePage(SimpleNamespace(), data_manager, {})
+
+    response = run(page._save_layer())
+
+    assert response["body"]["status"] == "ok"
+    assert response["body"]["data"]["entries"][0]["trigger_regex"] == pattern
+
+
 def test_layer_api_returns_entries_and_revision(tmp_path):
     data_manager = DataManager(str(tmp_path), {})
     base_revision = data_manager.layer_revision("s1", "universal")

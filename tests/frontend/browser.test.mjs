@@ -57,7 +57,7 @@ function mockBridgeScript() {
           [other]: [{ scene: '其他场景', behavior: '其他行为', created_at: 1 }],
         },
         specific: {
-          [sid]: [{ content: '原梗', trigger_regex: '原梗', trigger_count: 1 }],
+          [sid]: [{ content: '原梗', trigger_regex: '(?i)rjw', trigger_count: 1 }],
           [other]: [{ content: '<img src=x onerror="window.__XSS=1">', trigger_regex: 'x', trigger_count: 2 }],
         },
         revisions: {
@@ -172,6 +172,11 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     await firstSession.focus();
     await firstSession.press('Space');
     assert.equal(await frame.locator('#curSid').textContent(), 'a:test');
+
+    await frame.getByRole('tab', { name: '特定' }).click();
+    const specificRegex = frame.locator('input.mono').first();
+    assert.equal(await specificRegex.inputValue(), '(?i)rjw');
+    assert.equal(await specificRegex.evaluate((input) => input.classList.contains('invalid')), false);
 
     const overviewTab = frame.getByRole('tab', { name: '总览' });
     await overviewTab.focus();

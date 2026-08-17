@@ -3,7 +3,7 @@
 
 import { store, LAYERS, revisionFor, acceptSavedLayer } from './store.js';
 import { Api } from './api.js';
-import { $, el, esc, safeRegex } from './util.js';
+import { $, el, esc } from './util.js';
 import { icon } from './icons.js';
 import { toast, emptyState } from './ui.js';
 
@@ -155,14 +155,14 @@ function buildRow(key, entry) {
     cInp.value = entry.content;
     cInp.placeholder = '梗+释义，如：awsl（啊我死了）';
     const rInp = el('input', 'inp mono');
-    const invalid = entry.trigger_regex && !safeRegex(entry.trigger_regex);
+    const invalid = typeof entry.trigger_regex !== 'string' || !entry.trigger_regex.trim();
     if (invalid) rInp.classList.add('invalid');
     rInp.value = entry.trigger_regex || '';
     rInp.placeholder = '触发正则，如：awsl|啊我死了';
     cInp.addEventListener('input', () => { entry.content = cInp.value; markDirty(key); });
     rInp.addEventListener('input', () => {
       entry.trigger_regex = rInp.value;
-      const bad = !rInp.value || !safeRegex(rInp.value);
+      const bad = !rInp.value.trim();
       rInp.classList.toggle('invalid', bad);
       markDirty(key);
     });
@@ -219,9 +219,6 @@ export function validateLayer(key) {
       : entry.content.trim();
     if (seen.has(identity)) return { ok: false, message: `第 ${i + 1} 条与前面的条目重复` };
     seen.add(identity);
-    if (key === 'specific' && !safeRegex(entry.trigger_regex)) {
-      return { ok: false, message: `第 ${i + 1} 条正则语法无效` };
-    }
   }
   return { ok: true };
 }

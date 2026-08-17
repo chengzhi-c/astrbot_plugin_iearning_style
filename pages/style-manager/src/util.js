@@ -16,11 +16,6 @@ export function el(tag, cls, text) {
   return e;
 }
 
-/** 正则合法性检查（用户输入的 trigger_regex 边界校验） */
-export function safeRegex(s) {
-  try { new RegExp(s); return true; } catch { return false; }
-}
-
 /**
  * 将纪元秒时间戳转成相对时间。
  * 后端存储的时间戳为 epoch 秒（time.time()）。

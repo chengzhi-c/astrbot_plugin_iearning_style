@@ -81,8 +81,14 @@ test('layer validation catches empty and duplicate entries before save-all', () 
   resetStore();
   store.model.universal = [{ content: 'same' }, { content: 'same' }];
   assert.equal(validateLayer('universal').ok, false);
-  store.model.specific = [{ content: 'meme', trigger_regex: '(' }];
-  assert.equal(validateLayer('specific').ok, false);
+});
+
+
+test('specific layer accepts backend-valid inline regex flags', () => {
+  resetStore();
+  store.model.specific = [{ content: 'RJW', trigger_regex: '(?i)rjw' }];
+
+  assert.equal(validateLayer('specific').ok, true);
 });
 
 
