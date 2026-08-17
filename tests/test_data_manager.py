@@ -14,6 +14,7 @@ import os
 import time
 
 import pytest
+import regex
 
 from learning_style.data_manager import DataManager, RevisionConflictError
 
@@ -126,10 +127,13 @@ def test_add_or_update_specific_increments_trigger_count(dm):
     assert dm.specific["s1"][0]["trigger_count"] == 2
 
 
-def test_add_or_update_specific_keeps_different_regex(dm):
+def test_add_or_update_specific_combines_overlapping_regexes(dm):
     run(_different_specific_regex_seq(dm))
 
-    assert len(dm.specific["s1"]) == 2
+    assert len(dm.specific["s1"]) == 1
+    combined = dm.specific["s1"][0]["trigger_regex"]
+    assert regex.search(combined, "RJW")
+    assert regex.search(combined, "rjw")
 
 
 def test_add_or_update_specific_preserves_regex_whitespace(dm):
@@ -138,8 +142,23 @@ def test_add_or_update_specific_preserves_regex_whitespace(dm):
     assert dm.specific["s1"][0]["trigger_regex"] == " hello"
 
 
+def test_add_or_update_specific_merges_same_term_descriptions(dm):
+    run(_same_specific_term_seq(dm))
+
+    assert len(dm.specific["s1"]) == 1
+    assert dm.specific["s1"][0]["content"] == "本可（意为本公主，群内用于做娇）"
+    assert dm.specific["s1"][0]["trigger_count"] == 2
+
+
 async def _specific_regex_whitespace_seq(dm):
     dm.add_or_update_specific("s1", "梗", " hello")
+    await asyncio.sleep(0)
+
+
+async def _same_specific_term_seq(dm):
+    dm.add_or_update_specific("s1", "本可（用于做娇）", "本可")
+    await asyncio.sleep(0)
+    dm.add_or_update_specific("s1", "本可（意为本公主，群内用于做娇）", "本可")
     await asyncio.sleep(0)
 
 
@@ -205,7 +224,7 @@ def test_replace_layer_rejects_normalized_duplicate(tmp_path):
         ))
 
 
-def test_replace_specific_keeps_same_content_with_different_regex(tmp_path):
+def test_replace_specific_combines_overlapping_regexes(tmp_path):
     dm = _new_dm(tmp_path)
     revision = dm.layer_revision("s1", "specific")
 
@@ -219,7 +238,10 @@ def test_replace_specific_keeps_same_content_with_different_regex(tmp_path):
         revision,
     ))
 
-    assert len(result["entries"]) == 2
+    assert len(result["entries"]) == 1
+    combined = result["entries"][0]["trigger_regex"]
+    assert regex.search(combined, "RJW")
+    assert regex.search(combined, "rjw")
 
 
 # ==================== _schedule_save race 回归 ====================
@@ -600,18 +622,20 @@ def test_deduplicate_session_merges_safe_duplicates_and_persists(tmp_path):
     result = run(dm.deduplicate_session("s1"))
 
     assert result == {
-        "removed": {"universal": 1, "contextual": 1, "specific": 1},
-        "total_removed": 3,
-        "specific_conflicts": 1,
+        "removed": {"universal": 1, "contextual": 1, "specific": 2},
+        "total_removed": 4,
+        "specific_conflicts": 0,
     }
     assert dm.universal["s1"][0]["content"] == "风格Ａ"
     assert dm.universal["s1"][0]["proficiency"] == 30
     assert dm.universal["s1"][0]["confirmed_rounds"] == 4
     assert dm.contextual["s1"][0]["created_at"] == 10
-    assert len(dm.specific["s1"]) == 2
+    assert len(dm.specific["s1"]) == 1
     assert dm.specific["s1"][0]["trigger_count"] == 5
     assert dm.specific["s1"][0]["first_seen"] == 10
     assert dm.specific["s1"][0]["last_seen"] == 40
+    assert regex.search(dm.specific["s1"][0]["trigger_regex"], "RJW")
+    assert regex.search(dm.specific["s1"][0]["trigger_regex"], "rjw")
 
     reloaded = _new_dm(tmp_path)
     assert reloaded.get_session_layers("s1") == dm.get_session_layers("s1")
@@ -631,6 +655,114 @@ def test_deduplicate_session_keeps_regex_whitespace_semantics(tmp_path):
     assert [item["trigger_regex"] for item in dm.specific["s1"]] == [
         "rjw", " rjw"
     ]
+
+
+def test_deduplicate_session_merges_same_specific_term_and_regex(tmp_path):
+    dm = _new_dm(tmp_path)
+    short = "本可（沐语体系中的第一人称代词，用于做娇、戏谑地自称）"
+    detailed = "本可（沐语体系中的第一人称代词，意为本公主或本姑娘，群内用于做娇）"
+    dm.specific["s1"] = [
+        {"content": short, "trigger_regex": "本可", "trigger_count": 2},
+        {"content": detailed, "trigger_regex": "本可", "trigger_count": 5},
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["removed"]["specific"] == 1
+    assert result["specific_conflicts"] == 0
+    assert dm.specific["s1"] == [{
+        "content": detailed,
+        "trigger_regex": "本可",
+        "trigger_count": 5,
+        "first_seen": 0,
+        "last_seen": 0,
+    }]
+
+
+def test_deduplicate_session_combines_overlapping_regexes_for_same_term(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {
+            "content": "apt/aptaptapt（源自流行歌曲《APT!》，用于表达兴奋和狂欢）",
+            "trigger_regex": "[aA][pP][tT]+",
+            "trigger_count": 2,
+        },
+        {
+            "content": "aptaptapt（源自洗脑神曲，用于表达兴奋、狂欢或看热闹）",
+            "trigger_regex": "apt(apt)*",
+            "trigger_count": 4,
+        },
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["removed"]["specific"] == 1
+    assert result["specific_conflicts"] == 0
+    assert len(dm.specific["s1"]) == 1
+    combined = dm.specific["s1"][0]["trigger_regex"]
+    assert regex.search(combined, "APT")
+    assert regex.search(combined, "aptaptapt")
+
+
+def test_deduplicate_session_preserves_numeric_backreferences(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {
+            "content": "b/bb（单写或叠写）",
+            "trigger_regex": r"^(b)$",
+        },
+        {
+            "content": "b/bb（允许一个可选重复）",
+            "trigger_regex": r"^(b)\1?$",
+        },
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["removed"]["specific"] == 1
+    combined = regex.compile(dm.specific["s1"][0]["trigger_regex"])
+    assert combined.fullmatch("b")
+    assert combined.fullmatch("bb")
+
+
+def test_deduplicate_session_merges_transitive_alias_groups(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {"content": "apt（歌曲梗）", "trigger_regex": "apt"},
+        {"content": "aptaptapt（连写形式）", "trigger_regex": "apt"},
+        {"content": "apt/aptaptapt（歌曲梗别名）", "trigger_regex": "apt"},
+    ]
+
+    result = run(dm.deduplicate_session("s1"))
+
+    assert result["removed"]["specific"] == 2
+    assert len(dm.specific["s1"]) == 1
+
+
+def test_specific_injection_deduplicates_same_term_descriptions(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {"content": "本可（用于做娇）", "trigger_regex": "本可"},
+        {"content": "本可（意为本公主，群内用于做娇）", "trigger_regex": "本可"},
+    ]
+
+    injection = run(_specific_injection(dm, "本可"))
+
+    assert len(injection["specific"]) == 1
+
+
+def test_specific_injection_deduplicates_transitive_aliases(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {"content": "apt（歌曲梗）", "trigger_regex": "apt"},
+        {"content": "apt/aptaptapt（歌曲梗别名）", "trigger_regex": "apt"},
+        {"content": "aptaptapt（连写形式）", "trigger_regex": "apt"},
+    ]
+
+    injection = run(_specific_injection(dm, "aptaptapt"))
+
+    assert len(injection["specific"]) == 1
+
 
 def test_deduplicate_session_does_not_publish_when_save_fails(tmp_path, monkeypatch):
     dm = _new_dm(tmp_path)
@@ -994,6 +1126,12 @@ async def _specific_conflict_injection(dm):
     return injection
 
 
+async def _specific_injection(dm, message):
+    injection = dm.get_injection_data("s1", message)
+    await asyncio.sleep(0)
+    return injection
+
+
 def test_oversized_message_skips_specific_matching(tmp_path):
     dm = _new_dm(tmp_path)
     dm.specific["s1"] = [{
@@ -1085,6 +1223,53 @@ def test_specific_layer_save_preserves_stats_per_regex(tmp_path):
     assert [entry["trigger_count"] for entry in result["entries"]] == [3, 7]
     assert [entry["first_seen"] for entry in result["entries"]] == [1, 4]
     assert [entry["last_seen"] for entry in result["entries"]] == [2, 8]
+
+
+def test_specific_layer_save_merges_same_term_descriptions(tmp_path):
+    dm = _new_dm(tmp_path)
+    base_revision = dm.layer_revision("s1", "specific")
+
+    result = run(dm.replace_layer(
+        "s1",
+        "specific",
+        [
+            {"content": "本可（用于做娇）", "trigger_regex": "本可"},
+            {
+                "content": "本可（意为本公主，群内用于做娇）",
+                "trigger_regex": "本可",
+            },
+        ],
+        base_revision,
+    ))
+
+    assert len(result["entries"]) == 1
+    assert result["entries"][0]["content"] == "本可（意为本公主，群内用于做娇）"
+
+
+def test_specific_layer_save_preserves_stats_when_description_changes(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [{
+        "content": "本可（用于做娇）",
+        "trigger_regex": "本可",
+        "trigger_count": 7,
+        "first_seen": 1,
+        "last_seen": 2,
+    }]
+    base_revision = dm.layer_revision("s1", "specific")
+
+    result = run(dm.replace_layer(
+        "s1",
+        "specific",
+        [{
+            "content": "本可（意为本公主，群内用于做娇）",
+            "trigger_regex": "本可",
+        }],
+        base_revision,
+    ))
+
+    assert result["entries"][0]["trigger_count"] == 7
+    assert result["entries"][0]["first_seen"] == 1
+    assert result["entries"][0]["last_seen"] == 2
 
 
 def test_layer_save_returns_normalized_entries_and_new_revision(tmp_path):

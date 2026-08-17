@@ -24,6 +24,7 @@
 - `universal`：每轮全量重写，最多 10 条，每次回复全量注入。
 - `contextual`：追加并按 FIFO 管理，最新 20% 为缓冲位，每次回复全量注入。
 - `specific`：仅正则命中当前用户消息时注入；命中后更新 `trigger_count/last_seen`。
+- specific 去重以括号/冒号前词条及分隔别名为确定性身份；不同正则只允许合并为经过现有校验的匹配并集。
 - specific 校验必须共用 DataManager 入口。运行时限制为单模式 10ms、总预算 50ms、消息最大 10000 字符。
 
 ## WebUI 约束

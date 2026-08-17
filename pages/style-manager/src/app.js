@@ -230,7 +230,7 @@ async function deduplicateSession() {
   }
   const ok = await confirmModal({
     title: '去重当前会话',
-    body: '将删除三层表征中的安全重复项；正则不同的特定表征会保留。确定继续吗？',
+    body: '将删除格式等价或同词条的安全重复项；不同正则仅在匹配覆盖可完整保留时合并。确定继续吗？',
     okText: '去重',
     icon: 'copy',
   });

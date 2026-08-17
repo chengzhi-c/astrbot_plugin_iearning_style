@@ -30,6 +30,9 @@ MAX_MATCH_MESSAGE_LENGTH = 10000
 PER_PATTERN_TIMEOUT_SECONDS = 0.01
 TOTAL_MATCH_BUDGET_SECONDS = 0.05
 
+_SPECIFIC_TERM_END = regex.compile(r"[（(:：]")
+_SPECIFIC_ALIAS_SEPARATOR = regex.compile(r"\s*[/／、|｜]\s*")
+
 LAYERS = ("universal", "contextual", "specific", "chat_history")
 
 
@@ -187,14 +190,143 @@ class DataManager:
         ]
         return min(valid, default=0)
 
+    def _specific_aliases(self, content: str) -> dict[str, str]:
+        term = _SPECIFIC_TERM_END.split(content.strip(), maxsplit=1)[0]
+        aliases = {}
+        for alias in _SPECIFIC_ALIAS_SEPARATOR.split(term):
+            alias = alias.strip()
+            if alias:
+                aliases.setdefault(self._dedup_key(alias), alias)
+        if not aliases:
+            aliases[self._dedup_key(content)] = content.strip()
+        return aliases
+
+    @staticmethod
+    def _patterns_overlap_on_aliases(
+        existing_patterns: list[str], candidate_pattern: str, samples: set[str]
+    ) -> bool:
+        try:
+            candidate = _compile_trigger(candidate_pattern)
+            existing = [_compile_trigger(pattern) for pattern in existing_patterns]
+            for sample in samples:
+                if candidate.search(sample, timeout=PER_PATTERN_TIMEOUT_SECONDS) is None:
+                    continue
+                if any(
+                    pattern.search(sample, timeout=PER_PATTERN_TIMEOUT_SECONDS)
+                    is not None
+                    for pattern in existing
+                ):
+                    return True
+        except (TimeoutError, regex.error):
+            return False
+        return False
+
+    def _combine_trigger_patterns(self, patterns: list[str]) -> str | None:
+        unique = list(dict.fromkeys(patterns))
+        if len(unique) == 1:
+            return unique[0]
+        branches = "|".join(f"(?:{pattern})" for pattern in unique)
+        combined = f"(?|{branches})"
+        try:
+            self.validate_trigger_regex(combined)
+        except ValueError:
+            return None
+        return combined
+
+    def _deduplicate_specific_entries(
+        self, entries: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        current = entries
+        total_removed = 0
+        while True:
+            current, removed, conflicts = self._deduplicate_specific_pass(current)
+            total_removed += removed
+            if removed == 0:
+                return current, total_removed, conflicts
+
+    def _deduplicate_specific_pass(
+        self, entries: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        deduplicated = []
+        groups: list[dict[str, Any]] = []
+        removed = 0
+        conflicts = 0
+
+        for source in entries:
+            entry = copy.deepcopy(source)
+            entry["content"] = entry["content"].strip()
+            aliases = self._specific_aliases(entry["content"])
+            pattern = entry["trigger_regex"]
+            matched = None
+            combined_pattern = None
+            has_conflict = False
+
+            for group in groups:
+                shared = set(aliases) & set(group["aliases"])
+                if not shared:
+                    continue
+                if pattern in group["patterns"]:
+                    matched = group
+                    break
+
+                samples = set(shared)
+                samples.update(aliases[key] for key in shared)
+                samples.update(group["aliases"][key] for key in shared)
+                if self._patterns_overlap_on_aliases(
+                    group["patterns"], pattern, samples
+                ):
+                    combined_pattern = self._combine_trigger_patterns(
+                        [*group["patterns"], pattern]
+                    )
+                    if combined_pattern is not None:
+                        matched = group
+                        break
+                has_conflict = True
+
+            if matched is None:
+                if has_conflict:
+                    conflicts += 1
+                groups.append({
+                    "entry": entry,
+                    "aliases": aliases,
+                    "patterns": [pattern],
+                })
+                deduplicated.append(entry)
+                continue
+
+            previous = matched["entry"]
+            if combined_pattern is not None:
+                previous["trigger_regex"] = combined_pattern
+                matched["patterns"].append(pattern)
+            for key, value in aliases.items():
+                matched["aliases"].setdefault(key, value)
+            if len(self._dedup_key(entry["content"])) > len(
+                self._dedup_key(previous["content"])
+            ):
+                previous["content"] = entry["content"]
+            previous["trigger_count"] = max(
+                previous.get("trigger_count", 1),
+                entry.get("trigger_count", 1),
+            )
+            previous["first_seen"] = self._earliest_timestamp(
+                previous.get("first_seen"), entry.get("first_seen")
+            )
+            previous["last_seen"] = max(
+                previous.get("last_seen", 0), entry.get("last_seen", 0)
+            )
+            removed += 1
+
+        return deduplicated, removed, conflicts
+
     def _deduplicate_entries(
         self, layer: str, entries: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], int, int]:
+        if layer == "specific":
+            return self._deduplicate_specific_entries(entries)
+
         deduplicated: list[dict[str, Any]] = []
         seen: dict[Any, dict[str, Any]] = {}
-        specific_patterns: dict[str, set[str]] = {}
         removed = 0
-        specific_conflicts = 0
 
         for source in entries:
             entry = copy.deepcopy(source)
@@ -237,36 +369,10 @@ class DataManager:
                     previous.get("created_at"), entry.get("created_at")
                 )
                 removed += 1
-                continue
-
-            entry["content"] = entry["content"].strip()
-            content_key = self._dedup_key(entry["content"])
-            pattern = entry["trigger_regex"]
-            patterns = specific_patterns.setdefault(content_key, set())
-            if patterns and pattern not in patterns:
-                specific_conflicts += 1
-            patterns.add(pattern)
-            key = (content_key, pattern)
-            previous = seen.get(key)
-            if previous is None:
-                seen[key] = entry
-                deduplicated.append(entry)
-                continue
-            previous["trigger_count"] = max(
-                previous.get("trigger_count", 1),
-                entry.get("trigger_count", 1),
-            )
-            previous["first_seen"] = self._earliest_timestamp(
-                previous.get("first_seen"), entry.get("first_seen")
-            )
-            previous["last_seen"] = max(
-                previous.get("last_seen", 0), entry.get("last_seen", 0)
-            )
-            removed += 1
 
         if layer == "contextual":
             self._set_buffer_markers(deduplicated)
-        return deduplicated, removed, specific_conflicts
+        return deduplicated, removed, 0
 
     def _normalize_entry(self, layer: str, item: Any) -> dict[str, Any] | None:
         if not isinstance(item, dict):
@@ -727,12 +833,16 @@ class DataManager:
         if session_id not in self.specific:
             self.specific[session_id] = []
 
-        content_key = self._dedup_key(content)
+        aliases = set(self._specific_aliases(content))
         for trait in self.specific[session_id]:
             if (
-                self._dedup_key(trait["content"]) == content_key
+                not aliases.isdisjoint(self._specific_aliases(trait["content"]))
                 and trait.get("trigger_regex", "") == trigger_regex
             ):
+                if len(self._dedup_key(content)) > len(
+                    self._dedup_key(trait["content"])
+                ):
+                    trait["content"] = content
                 trait["trigger_count"] = trait.get("trigger_count", 0) + 1
                 trait["last_seen"] = current_time
                 self._mark_dirty("specific")
@@ -745,6 +855,9 @@ class DataManager:
             "first_seen": current_time,
             "last_seen": current_time,
         })
+        self.specific[session_id], _, _ = self._deduplicate_specific_entries(
+            self.specific[session_id]
+        )
         self._mark_dirty("specific")
 
     def remove_lowest_specific(self, session_id: str, count: int):
@@ -787,7 +900,7 @@ class DataManager:
             "contextual", self.contextual.get(session_id, [])
         )
         hit_contents = []
-        hit_keys = set()
+        hit_aliases = set()
         specific = self.specific.get(session_id, [])
         if (
             not specific
@@ -829,9 +942,10 @@ class DataManager:
                 continue
             if matched is None:
                 continue
-            content_key = self._dedup_key(trait["content"])
-            if content_key not in hit_keys:
-                hit_keys.add(content_key)
+            aliases = set(self._specific_aliases(trait["content"]))
+            is_new_term = hit_aliases.isdisjoint(aliases)
+            hit_aliases.update(aliases)
+            if is_new_term:
                 hit_contents.append(trait["content"])
             trait["trigger_count"] = trait.get("trigger_count", 0) + 1
             trait["last_seen"] = now
@@ -1316,11 +1430,11 @@ class DataManager:
             )
         old_entries, _, _ = self._deduplicate_entries("specific", current)
         old_exact = {}
-        old_by_content: dict[str, list[dict[str, Any]]] = {}
+        old_terms = []
         for item in old_entries:
             content_key = self._dedup_key(item["content"])
             old_exact[(content_key, item["trigger_regex"])] = item
-            old_by_content.setdefault(content_key, []).append(item)
+            old_terms.append((item, set(self._specific_aliases(item["content"]))))
         for index, item in enumerate(entries):
             content = self._required_field(item, "content", index)
             trigger_regex = self._required_field(
@@ -1334,7 +1448,19 @@ class DataManager:
             self.validate_trigger_regex(trigger_regex)
             previous = old_exact.get(key)
             if previous is None:
-                candidates = old_by_content.get(content_key, [])
+                aliases = set(self._specific_aliases(content))
+                candidates = [
+                    old
+                    for old, old_aliases in old_terms
+                    if not aliases.isdisjoint(old_aliases)
+                    and old["trigger_regex"] == trigger_regex
+                ]
+                if not candidates:
+                    candidates = [
+                        old
+                        for old, old_aliases in old_terms
+                        if not aliases.isdisjoint(old_aliases)
+                    ]
                 previous = candidates[0] if len(candidates) == 1 else {}
             normalized.append({
                 "content": content,
@@ -1343,7 +1469,8 @@ class DataManager:
                 "first_seen": previous.get("first_seen", now),
                 "last_seen": previous.get("last_seen", now),
             })
-        return normalized
+        deduplicated, _, _ = self._deduplicate_specific_entries(normalized)
+        return deduplicated
 
     async def replace_layer(
         self,

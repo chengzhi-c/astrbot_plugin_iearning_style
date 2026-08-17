@@ -97,7 +97,7 @@ class StylePage:
             f"/{PLUGIN_NAME}/deduplicate",
             self._deduplicate_session,
             ["POST"],
-            "去除某会话三层表征中的确定性重复项",
+            "去除某会话三层表征中的确定性或同词条重复项",
         )
         self.context.register_web_api(
             f"/{PLUGIN_NAME}/clear",
