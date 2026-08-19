@@ -1326,7 +1326,13 @@ class DataManager:
 
     def get_snapshot(self) -> dict[str, Any]:
         """返回三层表征的实时快照（供 WebUI 展示）。"""
-        sids = set(self.universal) | set(self.contextual) | set(self.specific)
+        sids = (
+            set(self.universal)
+            | set(self.contextual)
+            | set(self.specific)
+            | set(self.chat_history)
+            | set(self.session_names)
+        )
         return {
             "universal": copy.deepcopy(self.universal),
             "contextual": copy.deepcopy(self.contextual),

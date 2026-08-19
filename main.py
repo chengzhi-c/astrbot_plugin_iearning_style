@@ -1,3 +1,4 @@
+import inspect
 import time
 
 from astrbot.api import logger
@@ -19,7 +20,7 @@ _LEARN_FAILURE_MESSAGES = {
 _RECOVERY_FAILURE_MESSAGE = "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。"
 
 
-def _group_name_from_event(event: AstrMessageEvent) -> str:
+async def _group_name_from_event(event: AstrMessageEvent) -> str:
     """从 AstrBot 消息事件提取平台已提供的群名。"""
     message_obj = getattr(event, "message_obj", None)
     raw_message = getattr(message_obj, "raw_message", None)
@@ -31,10 +32,35 @@ def _group_name_from_event(event: AstrMessageEvent) -> str:
         raw_group_name = None
 
     sender = getattr(message_obj, "sender", None)
+    group = getattr(message_obj, "group", None)
     for value in (
         raw_group_name,
         getattr(message_obj, "group_name", None),
         getattr(sender, "group_name", None),
+        getattr(group, "group_name", None),
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    get_group_id = getattr(event, "get_group_id", None)
+    group_id = get_group_id() if callable(get_group_id) else None
+    if not group_id:
+        group_id = getattr(message_obj, "group_id", None)
+    get_group = getattr(event, "get_group", None)
+    if not group_id or not callable(get_group):
+        return ""
+
+    try:
+        fetched_group = get_group()
+        if inspect.isawaitable(fetched_group):
+            fetched_group = await fetched_group
+    except Exception:
+        logger.debug("获取群聊名称失败", exc_info=True)
+        return ""
+
+    for value in (
+        getattr(fetched_group, "group_name", None),
+        getattr(fetched_group, "name", None),
     ):
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -101,7 +127,7 @@ class IearningStylePlugin(Star):
             "content": message_content,
             "timestamp": time.time(),
         }
-        group_name = _group_name_from_event(event)
+        group_name = await _group_name_from_event(event)
         if group_name:
             message["session_name"] = group_name
 

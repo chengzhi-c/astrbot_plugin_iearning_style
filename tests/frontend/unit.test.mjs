@@ -22,6 +22,7 @@ function resetStore() {
     universal: { b: [{ content: 'u' }] },
     contextual: { a: [{ scene: 's', behavior: 'b' }] },
     specific: { b: [{ content: 'p', trigger_regex: 'p' }] },
+    session_names: { c: '尚未分析的群聊' },
     revisions: {
       universal: { a: 'ua', b: 'ub' },
       contextual: { a: 'ca', b: 'cb' },
@@ -37,7 +38,7 @@ function resetStore() {
 
 test('store derives stable sessions and counts', () => {
   resetStore();
-  assert.deepEqual(allSids(), ['a', 'b']);
+  assert.deepEqual(allSids(), ['a', 'b', 'c']);
   assert.deepEqual(counts('b'), { u: 1, c: 0, p: 1 });
   assert.equal(revisionFor('contextual'), 'ca');
 });

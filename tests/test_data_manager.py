@@ -1408,6 +1408,24 @@ def test_session_name_from_history_is_persisted_and_exposed_in_snapshot(tmp_path
     run(_persist_and_reload_session_name(tmp_path))
 
 
+def test_snapshot_includes_named_session_before_style_analysis(tmp_path):
+    async def exercise():
+        dm = _new_dm(tmp_path)
+        dm.add_message_to_history("group:456", {
+            "sender": "小明",
+            "content": "大家好",
+            "timestamp": 1,
+            "session_name": "尚未分析的群聊",
+        })
+
+        snapshot = dm.get_snapshot()
+
+        assert snapshot["session_names"] == {"group:456": "尚未分析的群聊"}
+        assert snapshot["revisions"]["universal"]["group:456"]
+
+    run(exercise())
+
+
 def test_invalid_session_names_temp_does_not_block_startup(tmp_path):
     (tmp_path / "session_names.json.tmp").write_text(
         json.dumps({"group:123": "   "}), encoding="utf-8"

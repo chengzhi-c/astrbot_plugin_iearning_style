@@ -162,6 +162,53 @@ def test_message_hook_records_group_name_from_raw_message():
     ]
 
 
+def test_message_hook_records_group_name_from_standard_group_object():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+    event = SimpleNamespace(
+        unified_msg_origin="group:456",
+        message_obj=SimpleNamespace(
+            group=SimpleNamespace(group_id="456", group_name="真实群聊名称"),
+            raw_message={"post_type": "message"},
+            sender=SimpleNamespace(),
+        ),
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages[-1][1]["session_name"] == "真实群聊名称"
+
+
+def test_message_hook_fetches_group_name_from_event_api_when_message_has_none():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    async def get_group():
+        return SimpleNamespace(group_name="接口返回的群名")
+
+    event = SimpleNamespace(
+        unified_msg_origin="group:789",
+        message_obj=SimpleNamespace(
+            group_id="789",
+            raw_message={"post_type": "message"},
+            sender=SimpleNamespace(),
+        ),
+        get_group=get_group,
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages[-1][1]["session_name"] == "接口返回的群名"
+
+
 def test_recovery_failure_keeps_plugin_unavailable(monkeypatch):
     def fail_data_manager(*_args, **_kwargs):
         raise main_module.StorageRecoveryError("unrecoverable save transaction")

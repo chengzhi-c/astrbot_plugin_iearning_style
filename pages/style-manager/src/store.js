@@ -77,6 +77,7 @@ export function allSids() {
   LAYER_KEYS.forEach((k) =>
     Object.keys(store.snapshot[k] || {}).forEach((id) => s.add(id))
   );
+  Object.keys(store.snapshot.session_names || {}).forEach((id) => s.add(id));
   return [...s].sort();
 }
 
