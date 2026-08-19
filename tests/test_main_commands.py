@@ -187,7 +187,8 @@ def test_message_hook_fetches_group_name_from_event_api_when_message_has_none():
     data_manager = RecordingDataManager()
     plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
 
-    async def get_group():
+    async def get_group(group_id):
+        assert group_id == "789"
         return SimpleNamespace(group_name="接口返回的群名")
 
     event = SimpleNamespace(
@@ -207,6 +208,68 @@ def test_message_hook_fetches_group_name_from_event_api_when_message_has_none():
     run(IearningStylePlugin.on_message(plugin, event))
 
     assert data_manager.messages[-1][1]["session_name"] == "接口返回的群名"
+
+
+def test_message_hook_ignores_placeholder_group_name_and_fetches_real_name():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    async def get_group(group_id):
+        assert group_id == "272372284"
+        return SimpleNamespace(group_name="占位值群聊的真实名称")
+
+    event = SimpleNamespace(
+        unified_msg_origin="阿c:GroupMessage:272372284",
+        message_obj=SimpleNamespace(
+            group=SimpleNamespace(group_id="272372284", group_name="N/A"),
+            raw_message={"post_type": "message"},
+            sender=SimpleNamespace(),
+        ),
+        get_group_id=lambda: "272372284",
+        get_group=get_group,
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages[-1][1]["session_name"] == "占位值群聊的真实名称"
+
+
+def test_message_hook_falls_back_to_platform_group_info_when_group_lookup_fails():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    async def get_group(_group_id):
+        raise RuntimeError("member list unavailable")
+
+    class Bot:
+        async def call_action(self, action, **kwargs):
+            assert action == "get_group_info"
+            assert kwargs == {"group_id": 272372284}
+            return {"group_name": "仅群信息接口可用"}
+
+    event = SimpleNamespace(
+        unified_msg_origin="阿c:GroupMessage:272372284",
+        message_obj=SimpleNamespace(
+            group=SimpleNamespace(group_id="272372284", group_name="N/A"),
+            raw_message={"post_type": "message"},
+            sender=SimpleNamespace(),
+        ),
+        bot=Bot(),
+        get_group_id=lambda: "272372284",
+        get_group=get_group,
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages[-1][1]["session_name"] == "仅群信息接口可用"
 
 
 def test_recovery_failure_keeps_plugin_unavailable(monkeypatch):

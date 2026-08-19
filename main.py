@@ -18,52 +18,104 @@ _LEARN_FAILURE_MESSAGES = {
     "invalid_response": "学习分析失败：LLM 返回内容无效。",
 }
 _RECOVERY_FAILURE_MESSAGE = "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。"
+_GROUP_NAME_PLACEHOLDERS = {"n/a", "na", "unknown", "未知", "未命名"}
+
+
+def _usable_group_name(value: object, group_id: object = None) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name or name.casefold() in _GROUP_NAME_PLACEHOLDERS:
+        return ""
+    if group_id is not None and name == str(group_id).strip():
+        return ""
+    return name
 
 
 async def _group_name_from_event(event: AstrMessageEvent) -> str:
     """从 AstrBot 消息事件提取平台已提供的群名。"""
     message_obj = getattr(event, "message_obj", None)
+    get_group_id = getattr(event, "get_group_id", None)
+    group_id = get_group_id() if callable(get_group_id) else None
+    if not group_id:
+        group_id = getattr(message_obj, "group_id", None)
+
     raw_message = getattr(message_obj, "raw_message", None)
     if isinstance(raw_message, dict):
         raw_group_name = raw_message.get("group_name")
+        raw_group = raw_message.get("group") or raw_message.get("group_info")
+        raw_group_name = raw_group_name or (
+            raw_group.get("group_name") if isinstance(raw_group, dict) else None
+        ) or (
+            raw_group.get("name") if isinstance(raw_group, dict) else None
+        )
     elif hasattr(raw_message, "__dict__"):
-        raw_group_name = raw_message.__dict__.get("group_name")
+        raw_group_name = getattr(raw_message, "group_name", None)
+        raw_group = getattr(raw_message, "group", None) or getattr(
+            raw_message, "group_info", None
+        )
+        raw_group_name = raw_group_name or getattr(raw_group, "group_name", None)
+        raw_group_name = raw_group_name or getattr(raw_group, "name", None)
     else:
         raw_group_name = None
 
     sender = getattr(message_obj, "sender", None)
     group = getattr(message_obj, "group", None)
+    get_extra = getattr(event, "get_extra", None)
+    extra_group_name = get_extra("group_name") if callable(get_extra) else None
     for value in (
         raw_group_name,
         getattr(message_obj, "group_name", None),
         getattr(sender, "group_name", None),
         getattr(group, "group_name", None),
+        getattr(group, "name", None),
+        extra_group_name,
     ):
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        name = _usable_group_name(value, group_id)
+        if name:
+            return name
 
-    get_group_id = getattr(event, "get_group_id", None)
-    group_id = get_group_id() if callable(get_group_id) else None
-    if not group_id:
-        group_id = getattr(message_obj, "group_id", None)
     get_group = getattr(event, "get_group", None)
     if not group_id or not callable(get_group):
         return ""
 
     try:
-        fetched_group = get_group()
+        fetched_group = get_group(group_id)
         if inspect.isawaitable(fetched_group):
             fetched_group = await fetched_group
     except Exception:
         logger.debug("获取群聊名称失败", exc_info=True)
-        return ""
+        fetched_group = None
 
     for value in (
         getattr(fetched_group, "group_name", None),
         getattr(fetched_group, "name", None),
     ):
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        name = _usable_group_name(value, group_id)
+        if name:
+            return name
+
+    bot = getattr(event, "bot", None)
+    call_action = getattr(bot, "call_action", None)
+    if not callable(call_action):
+        return ""
+
+    platform_group_id = (
+        int(group_id) if isinstance(group_id, str) and group_id.isdigit() else group_id
+    )
+    try:
+        group_info = call_action("get_group_info", group_id=platform_group_id)
+        if inspect.isawaitable(group_info):
+            group_info = await group_info
+    except Exception:
+        logger.debug("通过平台接口获取群聊名称失败", exc_info=True)
+        return ""
+
+    if isinstance(group_info, dict):
+        for value in (group_info.get("group_name"), group_info.get("name")):
+            name = _usable_group_name(value, group_id)
+            if name:
+                return name
     return ""
 
 
