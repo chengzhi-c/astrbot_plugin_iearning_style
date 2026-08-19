@@ -51,6 +51,18 @@ def test_replace_universal_marks_dirty(dm):
     assert "universal" in dm._dirty
 
 
+def test_replace_universal_rejects_more_than_ten_entries(dm):
+    run(_replace_universal_rejects_more_than_ten_entries(dm))
+
+
+async def _replace_universal_rejects_more_than_ten_entries(dm):
+    before = dm.get_universal_for_session("s1")
+    with pytest.raises(ValueError, match="通用表征容量上限"):
+        dm.replace_universal("s1", [f"风格 {index}" for index in range(11)])
+
+    assert dm.get_universal_for_session("s1") == before
+
+
 async def _replace_universal_seq(dm):
     dm.replace_universal("s1", ["语气活泼"])
     await asyncio.sleep(0)  # 让 create_task 入队
@@ -441,6 +453,58 @@ async def _fail_seq(dm):
     dm.replace_universal("s1", ["t"])
     await asyncio.sleep(0.25)  # 覆盖多轮迭代窗口；若死循环则此协程无法返回
     await dm.force_save()
+
+
+def test_failed_delayed_save_retries_without_new_mutation(tmp_path, monkeypatch):
+    dm = _new_dm(tmp_path)
+    dm._save_delay = 0.01
+    dm._retry_delays = (0.01,)
+    real_write = dm._write_json_atomic
+    attempts = 0
+
+    def fail_once(path, data):
+        nonlocal attempts
+        if path == dm.universal_file and attempts == 0:
+            attempts += 1
+            raise OSError("temporary disk error")
+        attempts += 1
+        real_write(path, data)
+
+    monkeypatch.setattr(dm, "_write_json_atomic", fail_once)
+
+    run(_wait_for_automatic_retry(dm))
+
+    with open(dm.universal_file, encoding="utf-8") as file:
+        persisted = json.load(file)
+    assert [item["content"] for item in persisted["s1"]] == ["recovered"]
+    assert attempts >= 2
+    assert not dm._dirty
+
+
+async def _wait_for_automatic_retry(dm):
+    dm.replace_universal("s1", ["recovered"])
+    for _ in range(40):
+        if not dm._dirty:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("保存失败后未在没有新变更时自动重试")
+
+
+def test_force_save_can_skip_retry_for_shutdown(dm, monkeypatch):
+    run(_force_save_can_skip_retry_for_shutdown(dm, monkeypatch))
+
+
+async def _force_save_can_skip_retry_for_shutdown(dm, monkeypatch):
+    dm.replace_universal("s1", ["shutdown"])
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(dm, "_write_json_atomic", fail_write)
+
+    assert await dm.force_save(retry_on_failure=False) is False
+    assert dm._save_timer is None or dm._save_timer.done()
+    assert "universal" in dm._dirty
 
 
 # ==================== P1 回归：clear_session 必须延迟落盘 ====================
@@ -943,6 +1007,17 @@ def test_valid_tmp_recovers_when_target_is_invalid(tmp_path):
     assert not tmp.exists()
 
 
+def test_invalid_transaction_journal_blocks_startup(tmp_path):
+    (tmp_path / "universal.json").write_text(
+        json.dumps({"s1": [{"content": "possibly partial"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".save-transaction.json").write_text("{invalid", encoding="utf-8")
+
+    with pytest.raises(OSError, match="保存事务"):
+        _new_dm(tmp_path)
+
+
 def test_multifile_interruption_rolls_forward_on_restart(tmp_path, monkeypatch):
     dm = _new_dm(tmp_path)
     run(_interrupt_multifile_save(dm, monkeypatch))
@@ -1307,6 +1382,44 @@ def test_snapshot_returns_copies_and_revisions(tmp_path):
     assert snapshot["revisions"]["universal"]["s1"] == dm.layer_revision(
         "s1", "universal"
     )
+
+
+async def _persist_and_reload_session_name(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.add_message_to_history("group:123", {
+        "sender": "小明",
+        "content": "大家好",
+        "timestamp": 1,
+        "session_name": "开发讨论群",
+    })
+    dm.replace_universal("group:123", ["简洁"])
+
+    assert dm.get_snapshot()["session_names"] == {"group:123": "开发讨论群"}
+    assert await dm.force_save() is True
+
+    reloaded = _new_dm(tmp_path)
+
+    assert reloaded.get_snapshot()["session_names"] == {
+        "group:123": "开发讨论群"
+    }
+
+
+def test_session_name_from_history_is_persisted_and_exposed_in_snapshot(tmp_path):
+    run(_persist_and_reload_session_name(tmp_path))
+
+
+def test_invalid_session_names_temp_does_not_block_startup(tmp_path):
+    (tmp_path / "session_names.json.tmp").write_text(
+        json.dumps({"group:123": "   "}), encoding="utf-8"
+    )
+
+    try:
+        dm = _new_dm(tmp_path)
+    except Exception as exc:  # noqa: BLE001
+        pytest.fail(f"invalid session-name temp blocked startup: {exc}")
+
+    assert dm.session_names == {}
+    assert not (tmp_path / "session_names.json.tmp").exists()
 
 
 def test_public_read_interfaces_do_not_expose_internal_layers(tmp_path):

@@ -1,193 +1,323 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
   <title>风格管理 · 入乡随俗</title>
-  <link rel="icon" href="data:,">
+  <meta name="description" content="智能学习风格管理面板 - 霓虹赛博美学">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>✨</text></svg>">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <!-- ============ App Bar（顶栏，常驻全局状态） ============ -->
-  <header class="appbar">
-    <button class="icon-btn hamburger" id="hamb" aria-label="打开会话列表" aria-expanded="false" title="会话列表">
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  <!-- 顶栏 -->
+  <header class="appbar" role="banner">
+    <button class="icon-btn hamburger" id="hamb" aria-label="打开会话列表" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
     </button>
+
     <div class="brand">
-      <div class="logo" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.6-.8L3 21l1.9-5.5A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z"/><path d="M8.5 12h8M8.5 15h5"/></svg>
+      <div class="logo-container">
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9z"/>
+            <path d="M8 10h.01M12 10h.01M16 10h.01"/>
+            <path d="M8.5 14.5c1 1 2.5 1.5 3.5 1.5s2.5-.5 3.5-1.5"/>
+          </svg>
+        </div>
       </div>
       <div class="brand-text">
-        <h1>入乡随俗 · 风格管理</h1>
-        <span class="ver" id="verTag">v1.2.0</span>
+        <h1>入乡随俗</h1>
+        <span class="brand-sub">Style Manager · <span id="verTag">v1.2.0</span></span>
       </div>
     </div>
-    <span class="sp"></span>
-    <span class="status-pill" id="injectPill" title="风格注入开关（来自配置 enable_style_injection）">
-      <span class="dot" id="injectDot"></span><span id="injectTxt">注入：—</span>
-    </span>
-    <button class="icon-btn" id="btnRefresh" aria-label="刷新数据" title="刷新">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-    </button>
-    <button class="icon-btn" id="btnTheme" aria-label="切换明暗主题" title="切换主题"></button>
-    <button class="icon-btn" id="btnHelp" aria-label="帮助与说明" title="帮助">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
-    </button>
+
+    <span class="spacer"></span>
+
+    <div class="status-group">
+      <div class="status-pill" id="injectPill" role="status">
+        <span class="status-dot" id="injectDot"></span>
+        <span class="status-text" id="injectTxt">注入状态</span>
+      </div>
+    </div>
+
+    <div class="toolbar-actions">
+      <button class="icon-btn" id="btnRefresh" aria-label="刷新数据" title="刷新 (F5)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+          <path d="M21 3v6h-6"/>
+        </svg>
+      </button>
+
+      <button class="icon-btn" id="btnTheme" aria-label="切换主题" title="切换主题">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+
+      <button class="icon-btn" id="btnHelp" aria-label="帮助" title="帮助">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <path d="M12 17h.01"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
-  <!-- ============ 未保存修改横幅 ============ -->
+  <!-- 未保存修改横幅 -->
   <div class="banner" id="dirtyBanner" role="status" aria-live="polite">
-    <b>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
-      有未保存的修改
-    </b>
-    <span class="sp"></span>
-    <button class="btn sm primary" id="saveAll2">保存全部</button>
-    <button class="btn sm" id="discardAll2">丢弃</button>
+    <div class="banner-content">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 8v4M12 16h.01"/>
+      </svg>
+      <span class="banner-text"><strong>有未保存的修改</strong> — 请保存或丢弃</span>
+    </div>
+    <div class="banner-actions">
+      <button class="btn btn-sm btn-ghost" id="discardAll2">丢弃</button>
+      <button class="btn btn-sm btn-primary" id="saveAll2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <path d="M7 3v6h10"/>
+          <path d="M9 12h6"/>
+        </svg>
+        保存全部
+      </button>
+    </div>
   </div>
 
   <div class="scrim" id="scrim"></div>
 
-  <!-- ============ Shell ============ -->
+  <!-- 主容器 -->
   <div class="shell">
-    <!-- 会话侧栏（主导航） -->
+    <!-- 侧边栏 -->
     <aside class="sidebar" id="sidebar" aria-label="会话列表">
-      <div class="side-head">
-        <span class="title">会话</span>
-        <span class="cnt" id="sessCnt"></span>
+      <div class="sidebar-header">
+        <h2 class="sidebar-title">会话列表</h2>
+        <span class="sidebar-count" id="sessCnt">0</span>
       </div>
+
       <div class="search-box">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-        <input id="sessSearch" type="text" placeholder="搜索会话 ID…" aria-label="搜索会话">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input id="sessSearch" type="text" placeholder="搜索会话..." aria-label="搜索会话">
       </div>
-      <div class="sess-list" id="sessList"></div>
-      <div class="side-foot" id="sideFoot"></div>
+
+      <div class="session-list" id="sessList"></div>
+
+      <div class="sidebar-footer" id="sideFoot"></div>
     </aside>
 
-    <!-- 工作区（随选中会话切换） -->
+    <!-- 工作区 -->
     <main class="workspace" id="ws">
-      <section id="noSelect" class="empty-state" style="padding-top:88px">
-        <svg class="art" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><circle cx="9" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M7.5 14.5c1.2 1.3 2.8 2 4.5 2s3.3-.7 4.5-2"/></svg>
-        <div class="es-title">选择一个会话开始管理</div>
-        <div class="es-desc">插件会在聊天记录积累后自动学习说话风格。选中左侧任意会话，即可查看与编辑它的三层表征。</div>
+      <!-- 空状态 -->
+      <section id="noSelect" class="empty-view">
+        <div class="empty-content">
+          <div class="empty-icon">
+            <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <circle cx="9" cy="9" r="1.5" fill="currentColor"/>
+              <circle cx="15" cy="9" r="1.5" fill="currentColor"/>
+              <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+            </svg>
+          </div>
+          <h2 class="empty-title">选择一个会话开始管理</h2>
+          <p class="empty-desc">插件会在聊天记录积累后自动学习说话风格<br>选择左侧任意会话，即可查看和编辑风格数据</p>
+        </div>
       </section>
 
+      <!-- 工作区内容 -->
       <section id="work" style="display:none">
-        <!-- 会话头 -->
-        <div class="sess-head">
-          <div class="sess-info">
-            <div class="sess-id" id="curSid"><span class="sid-label">会话</span></div>
-            <div class="sess-sub" id="curChips"></div>
+        <!-- 会话头部 -->
+        <div class="session-header">
+          <div class="session-info">
+            <div class="session-id-wrapper">
+              <span class="session-label">会话</span>
+              <h2 class="session-id" id="curSid">未选择</h2>
+            </div>
+            <div class="session-stats" id="curChips"></div>
           </div>
-          <div class="sess-actions">
-            <button class="btn primary" id="btnLearn" title="等价于聊天命令「学习总结」">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3zM19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8L19 17z"/></svg>
+
+          <div class="session-actions">
+            <button class="btn btn-primary" id="btnLearn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l1.9 5.8L19 10l-5.1 1.2L12 17l-1.9-5.8L5 10l5.1-1.2L12 3z"/>
+                <path d="M19 17l.9 2.8L22 20.5l-2.1.7L19 24l-.9-2.8L16 20.5l2.1-.7L19 17z"/>
+              </svg>
               立即学习
             </button>
-            <button class="btn soft" id="btnDeduplicate" title="清理格式等价或同词条的重复表征">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              去重本会话
+
+            <button class="btn btn-soft" id="btnDeduplicate">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              去重
             </button>
-            <button class="btn soft" id="btnExport" title="导出该会话三层表征为 JSON">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+
+            <button class="btn btn-soft" id="btnExport">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
               导出
             </button>
-            <button class="btn danger-soft" id="btnClear" title="等价于聊天命令「清空风格」">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>
-              清空本会话
+
+            <button class="btn btn-danger-soft" id="btnClear">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+              清空
             </button>
           </div>
         </div>
 
-        <!-- 二级导航：Tab -->
-        <nav class="tabs" id="tabs" role="tablist" aria-label="视图切换">
-          <span class="tab-ind" aria-hidden="true"></span>
-          <button class="tab active" type="button" data-tab="overview" role="tab" aria-selected="true" tabindex="0">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-            总览
+        <!-- 标签页导航 -->
+        <nav class="tabs" role="tablist" aria-label="视图切换">
+          <div class="tab-indicator" aria-hidden="true"></div>
+
+          <button class="tab active" type="button" data-tab="overview" role="tab" aria-selected="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1"/>
+              <rect x="14" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="14" width="7" height="7" rx="1"/>
+              <rect x="14" y="14" width="7" height="7" rx="1"/>
+            </svg>
+            <span>总览</span>
           </button>
-          <button class="tab" type="button" data-tab="universal" role="tab" aria-selected="false" tabindex="-1">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-universal)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-            通用
+
+          <button class="tab" type="button" data-tab="universal" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+            <span>通用</span>
           </button>
-          <button class="tab" type="button" data-tab="contextual" role="tab" aria-selected="false" tabindex="-1">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-contextual)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1.5"/><rect x="3" y="16" width="6" height="5" rx="1.5"/><rect x="15" y="16" width="6" height="5" rx="1.5"/><path d="M12 8v4m0 0H9v4m3-4h3v4"/></svg>
-            情境
+
+          <button class="tab" type="button" data-tab="contextual" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/>
+            </svg>
+            <span>情境</span>
           </button>
-          <button class="tab" type="button" data-tab="specific" role="tab" aria-selected="false" tabindex="-1">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-specific)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/></svg>
-            特定
+
+          <button class="tab" type="button" data-tab="specific" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 9h16"/>
+              <path d="M4 15h16"/>
+              <path d="M10 3L8 21"/>
+              <path d="M16 3l-2 18"/>
+            </svg>
+            <span>特定</span>
           </button>
         </nav>
 
-        <div id="tabOverview" class="tab-panel" role="tabpanel"></div>
-        <div id="tabLayer" class="tab-panel" role="tabpanel" style="display:none"></div>
+        <!-- 标签页内容 -->
+        <div id="tabOverview" class="tab-content" role="tabpanel"></div>
+        <div id="tabLayer" class="tab-content" role="tabpanel" style="display:none"></div>
       </section>
     </main>
   </div>
 
-  <!-- ============ 确认弹窗 ============ -->
-  <dialog class="overlay" id="overlay" aria-labelledby="mTitle">
-    <div class="modal">
+  <!-- 确认对话框 -->
+  <dialog class="modal-overlay" id="overlay" aria-labelledby="mTitle">
+    <div class="modal-container">
       <div class="modal-icon" id="mIcon"></div>
-      <h3 id="mTitle">确认</h3>
-      <p id="mBody"></p>
+      <h3 class="modal-title" id="mTitle">确认</h3>
+      <p class="modal-body" id="mBody"></p>
       <div class="modal-actions">
-        <button class="btn ghost" id="mCancel">取消</button>
-        <button class="btn danger" id="mOk">确定</button>
+        <button class="btn btn-ghost" id="mCancel">取消</button>
+        <button class="btn btn-danger" id="mOk">确定</button>
       </div>
     </div>
   </dialog>
 
-  <!-- ============ Toast 容器（可堆叠） ============ -->
-  <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+  <!-- Toast 通知容器 -->
+  <div class="toast-container" id="toastWrap" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- ============ 帮助抽屉 ============ -->
-  <dialog class="help-ov" id="helpOv" aria-label="使用说明">
-    <div class="help-panel">
-      <div class="help-head">
-        <h2>入乡随俗 · 使用说明</h2>
-        <button class="icon-btn" id="helpClose" aria-label="关闭说明">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  <!-- 帮助面板 -->
+  <dialog class="help-dialog" id="helpOv" aria-label="使用说明">
+    <div class="help-container">
+      <div class="help-header">
+        <h2>使用说明</h2>
+        <button class="icon-btn" id="helpClose" aria-label="关闭">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
         </button>
       </div>
-      <div class="help-body">
-        <div class="help-lead">让机器人从聊天中学习并模仿他人的说话方式。</div>
 
-        <div class="help-section">
-          <h4><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg> 三层表征</h4>
-          <ul>
-            <li><b style="color:var(--c-universal)">通用</b>：稳定的说话基调（语气/用词），全部注入每次回复，上限 10 条。</li>
-            <li><b style="color:var(--c-contextual)">情境</b>：场景→行为的固定反应，按 FIFO 容量管理，最新 20% 为缓冲位。</li>
-            <li><b style="color:var(--c-specific)">特定</b>：群内梗与释义，含触发正则（trigger_regex），命中才注入。</li>
-          </ul>
-        </div>
+      <div class="help-content">
+        <p class="help-lead">让机器人从聊天中学习并模仿他人的说话方式</p>
 
-        <div class="help-section">
-          <h4><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> 常用操作</h4>
+        <section class="help-section">
+          <h3>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            三层表征体系
+          </h3>
           <ul>
-            <li>编辑后点击对应层的 <code>保存本层</code> 才生效；未变化条目会保留学习统计。</li>
-            <li><code>立即学习</code> 等价于聊天命令「学习总结」；<code>清空本会话</code> 等价于「清空风格」。</li>
-            <li>未保存修改时顶部横幅可「保存全部」或「丢弃」；切换会话/刷新会二次确认。</li>
+            <li><strong>通用层</strong>：稳定的说话基调（语气/用词），全部注入每次回复，上限 10 条</li>
+            <li><strong>情境层</strong>：场景→行为的固定反应，按 FIFO 容量管理，最新 20% 为缓冲位</li>
+            <li><strong>特定层</strong>：群内梗与释义，含触发正则，命中才注入</li>
           </ul>
-        </div>
+        </section>
 
-        <div class="help-section">
-          <h4><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> 快捷键</h4>
+        <section class="help-section">
+          <h3>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+            常用操作
+          </h3>
           <ul>
-            <li><span class="kbd">/</span> 聚焦会话搜索</li>
-            <li><span class="kbd">Ctrl</span> + <span class="kbd">S</span> / <span class="kbd">⌘</span> + <span class="kbd">S</span> 保存当前层</li>
-            <li><span class="kbd">Esc</span> 关闭弹窗 / 帮助 / 抽屉</li>
+            <li>编辑后需点击"保存本层"才会生效</li>
+            <li>"立即学习"等价于聊天命令「学习总结」</li>
+            <li>"清空"等价于聊天命令「清空风格」</li>
+            <li>未保存修改时顶部横幅可"保存全部"或"丢弃"</li>
           </ul>
-        </div>
+        </section>
 
-        <div class="help-section">
-          <h4><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg> 数据与隐私</h4>
+        <section class="help-section">
+          <h3>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="2" width="6" height="20" rx="1"/>
+              <path d="M9 10h6"/>
+            </svg>
+            快捷键
+          </h3>
           <ul>
-            <li>所有数据来自插件本地存储，页面经 AstrBot 面板桥接读取，不会上传第三方。</li>
-            <li>特定层正则受 ReDoS 防护约束（长度 ≤200、拒绝嵌套量词，并限制运行时匹配时长）。</li>
+            <li><kbd>/</kbd> 聚焦会话搜索</li>
+            <li><kbd>Ctrl</kbd> + <kbd>S</kbd> 保存当前层</li>
+            <li><kbd>Esc</kbd> 关闭弹窗/帮助</li>
           </ul>
-        </div>
+        </section>
+
+        <section class="help-section">
+          <h3>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            数据与隐私
+          </h3>
+          <ul>
+            <li>所有数据来自插件本地存储，不会上传第三方</li>
+            <li>特定层正则受 ReDoS 防护约束（长度 ≤200、拒绝嵌套量词）</li>
+          </ul>
+        </section>
       </div>
     </div>
   </dialog>

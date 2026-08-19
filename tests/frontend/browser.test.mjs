@@ -63,6 +63,10 @@ function mockBridgeScript() {
           [sid]: [{ content: '原梗', trigger_regex: '(?i)rjw', trigger_count: 1 }],
           [other]: [{ content: '<img src=x onerror="window.__XSS=1">', trigger_regex: 'x', trigger_count: 2 }],
         },
+        session_names: {
+          [sid]: '开发讨论群',
+          [other]: '产品反馈群',
+        },
         revisions: {
           universal: { [sid]: 'u-1', [other]: 'u-2' },
           contextual: { [sid]: 'c-1', [other]: 'c-2' },
@@ -155,6 +159,8 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     assert.ok(frame);
     await frame.waitForSelector('#curSid');
     assert.equal(await frame.locator('#curSid').textContent(), 'a:test');
+    assert.equal(await frame.locator('.session-item').first().locator('.session-id').textContent(), '开发讨论群');
+    assert.equal(await frame.locator('.session-item').first().getAttribute('title'), 'a:test');
 
     await frame.getByRole('button', { name: '去重本会话' }).click();
     assert.match(await frame.locator('#mBody').textContent(), /安全重复/);

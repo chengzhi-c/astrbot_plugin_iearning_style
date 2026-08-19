@@ -368,7 +368,9 @@ function wireEvents() {
   });
 
   $('btnLearn').onclick = learnNow;
+  $('btnDeduplicate').setAttribute('aria-label', '去重本会话');
   $('btnDeduplicate').onclick = deduplicateSession;
+  $('btnClear').setAttribute('aria-label', '清空本会话');
   $('btnClear').onclick = clearSession;
   $('btnExport').onclick = exportSession;
 

@@ -33,7 +33,13 @@ TOTAL_MATCH_BUDGET_SECONDS = 0.05
 _SPECIFIC_TERM_END = regex.compile(r"[（(:：]")
 _SPECIFIC_ALIAS_SEPARATOR = regex.compile(r"\s*[/／、|｜]\s*")
 
-LAYERS = ("universal", "contextual", "specific", "chat_history")
+LAYERS = (
+    "universal",
+    "contextual",
+    "specific",
+    "chat_history",
+    "session_names",
+)
 
 
 @lru_cache(maxsize=512)
@@ -42,6 +48,10 @@ def _compile_trigger(pattern: str):
 
 
 class RevisionConflictError(ValueError):
+    pass
+
+
+class StorageRecoveryError(OSError):
     pass
 
 
@@ -59,18 +69,21 @@ class DataManager:
         self.contextual_file = os.path.join(data_dir, "contextual.json")
         self.specific_file = os.path.join(data_dir, "specific.json")
         self.chat_history_file = os.path.join(data_dir, "chat_history.json")
+        self.session_names_file = os.path.join(data_dir, "session_names.json")
         self.transaction_file = os.path.join(data_dir, ".save-transaction.json")
         self._layer_files = {
             "universal": self.universal_file,
             "contextual": self.contextual_file,
             "specific": self.specific_file,
             "chat_history": self.chat_history_file,
+            "session_names": self.session_names_file,
         }
 
         self.universal: dict[str, list[dict[str, Any]]] = {}
         self.contextual: dict[str, list[dict[str, Any]]] = {}
         self.specific: dict[str, list[dict[str, Any]]] = {}
         self.chat_history: dict[str, list[dict[str, Any]]] = {}
+        self.session_names: dict[str, str] = {}
 
         self.config = config
         self.max_contextual_per_session = self._positive_int_config(
@@ -90,15 +103,19 @@ class DataManager:
         self._dirty: set[str] = set()
         self._save_timer: asyncio.Task | None = None
         self._save_delay = 5.0
+        self._retry_delays = (5.0, 30.0, 120.0, 300.0)
+        self._retry_index = 0
 
         self._ensure_data_dir()
-        self._recover_save_transaction()
+        if not self._recover_save_transaction():
+            raise StorageRecoveryError("存在无法恢复的保存事务")
         for layer, path in self._layer_files.items():
             self._recover_atomic_temp(layer, path)
         self.load_universal()
         self.load_contextual()
         self.load_specific()
         self.load_chat_history()
+        self.load_session_names()
         self._handle_old_format()
 
     def _positive_int_config(self, key: str, default: int) -> int:
@@ -430,15 +447,45 @@ class DataManager:
         content = item.get("content")
         if not isinstance(sender, str) or not isinstance(content, str):
             return None
-        return {
+        normalized = {
             "sender": sender,
             "content": content,
             "timestamp": self._nonnegative_number(item.get("timestamp"), 0),
         }
+        session_name = self._session_name(item.get("session_name"))
+        if session_name:
+            normalized["session_name"] = session_name
+        return normalized
+
+    @staticmethod
+    def _session_name(value: Any) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    def _normalize_session_names(
+        self, raw: Any
+    ) -> tuple[dict[str, str], bool]:
+        if not isinstance(raw, dict):
+            raise ValueError("root must be an object")
+        cleaned: dict[str, str] = {}
+        changed = False
+        for session_id, name in raw.items():
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise ValueError("session ID must be a non-empty string")
+            normalized_name = self._session_name(name)
+            if not normalized_name:
+                changed = True
+                logger.warning("加载 session_names 时跳过无效群名。")
+                continue
+            cleaned[session_id] = normalized_name
+            if normalized_name != name:
+                changed = True
+        return cleaned, changed
 
     def _normalize_store(
         self, layer: str, raw: Any
-    ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+    ) -> tuple[dict[str, Any], bool]:
+        if layer == "session_names":
+            return self._normalize_session_names(raw)
         if not isinstance(raw, dict):
             raise ValueError("root must be an object")
         cleaned: dict[str, list[dict[str, Any]]] = {}
@@ -500,7 +547,9 @@ class DataManager:
         try:
             with open(path, encoding="utf-8") as file:
                 raw = json.load(file)
-            cleaned, _ = self._normalize_store(layer, raw)
+            cleaned, changed = self._normalize_store(layer, raw)
+            if layer == "session_names":
+                return not changed
             return all(
                 len(cleaned[session_id]) == len(entries)
                 for session_id, entries in raw.items()
@@ -615,6 +664,21 @@ class DataManager:
     def get_universal_for_session(self, session_id: str) -> list[dict[str, Any]]:
         return copy.deepcopy(self.universal.get(session_id, []))
 
+    def _validate_universal_contents(self, contents: Any) -> list[str]:
+        if not isinstance(contents, list):
+            raise ValueError("universal must be a list")
+        if len(contents) > MAX_UNIVERSAL_PER_SESSION:
+            raise ValueError(
+                f"条目数 {len(contents)} 超过通用表征容量上限 "
+                f"{MAX_UNIVERSAL_PER_SESSION}"
+            )
+        normalized = []
+        for content in contents:
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("universal entries must be non-empty strings")
+            normalized.append(content.strip())
+        return normalized
+
     def replace_universal(self, session_id: str, contents: list[str]):
         """
         全量替换通用表征。
@@ -622,7 +686,7 @@ class DataManager:
         - 新增的表征 proficiency=10，confirmed_rounds=1
         """
         self.universal[session_id] = self._build_universal_traits(
-            session_id, contents
+            session_id, self._validate_universal_contents(contents)
         )
         self._mark_dirty("universal")
 
@@ -967,11 +1031,7 @@ class DataManager:
             if not isinstance(payload.get(field), list):
                 raise ValueError(f"{field} must be a list")
 
-        universal_contents = []
-        for content in payload["universal"]:
-            if not isinstance(content, str) or not content.strip():
-                raise ValueError("universal entries must be non-empty strings")
-            universal_contents.append(content.strip())
+        universal_contents = self._validate_universal_contents(payload["universal"])
 
         contextual_items = []
         for item in payload["contextual"]:
@@ -1083,16 +1143,29 @@ class DataManager:
     def _mark_dirty(self, *layers: str) -> None:
         """Mark changed layers and ensure one delayed save is active."""
         self._dirty.update(layers)
+        self._schedule_save(self._save_delay)
+
+    def _schedule_save(self, delay: float) -> None:
         if self._save_timer is not None and not self._save_timer.done():
             return
-        self._save_timer = asyncio.create_task(self._delayed_save())
+        self._save_timer = asyncio.create_task(self._delayed_save(delay))
 
-    async def _delayed_save(self) -> None:
+    def _next_retry_delay(self) -> float:
+        delay = self._retry_delays[self._retry_index]
+        self._retry_index = min(
+            self._retry_index + 1, len(self._retry_delays) - 1
+        )
+        return delay
+
+    async def _delayed_save(self, delay: float) -> None:
         try:
-            await asyncio.sleep(self._save_delay)
             while self._dirty:
-                if not await self._save_layers(set(self._dirty)):
-                    break
+                await asyncio.sleep(delay)
+                if await self._save_layers(set(self._dirty)):
+                    self._retry_index = 0
+                    delay = 0
+                else:
+                    delay = self._next_retry_delay()
         finally:
             self._save_timer = None
 
@@ -1160,7 +1233,7 @@ class DataManager:
         self._dirty.difference_update(layers)
         return True
 
-    async def force_save(self) -> bool:
+    async def force_save(self, *, retry_on_failure: bool = True) -> bool:
         if self._save_timer is not None and not self._save_timer.done():
             self._save_timer.cancel()
             try:
@@ -1168,7 +1241,12 @@ class DataManager:
             except asyncio.CancelledError:
                 pass
             self._save_timer = None
-        return await self._save_layers(set(self._dirty))
+        saved = await self._save_layers(set(self._dirty))
+        if saved:
+            self._retry_index = 0
+        elif self._dirty and retry_on_failure:
+            self._schedule_save(self._next_retry_delay())
+        return saved
 
     # ==================== 聊天记录 ====================
 
@@ -1178,7 +1256,18 @@ class DataManager:
     async def save_chat_history(self) -> bool:
         return await self._save_layers({"chat_history"})
 
+    def load_session_names(self):
+        self._load_layer(self.session_names_file, "session_names")
+
+    def set_session_name(self, session_id: str, name: Any) -> None:
+        session_name = self._session_name(name)
+        if not session_name or self.session_names.get(session_id) == session_name:
+            return
+        self.session_names[session_id] = session_name
+        self._mark_dirty("session_names")
+
     def add_message_to_history(self, session_id: str, message: dict[str, Any]):
+        self.set_session_name(session_id, message.get("session_name"))
         if session_id not in self.chat_history:
             self.chat_history[session_id] = []
         self.chat_history[session_id].append(message)
@@ -1242,6 +1331,11 @@ class DataManager:
             "universal": copy.deepcopy(self.universal),
             "contextual": copy.deepcopy(self.contextual),
             "specific": copy.deepcopy(self.specific),
+            "session_names": {
+                session_id: self.session_names[session_id]
+                for session_id in sids
+                if session_id in self.session_names
+            },
             "revisions": {
                 layer: {
                     session_id: self.layer_revision(session_id, layer)

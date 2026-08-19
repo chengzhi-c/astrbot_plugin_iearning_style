@@ -53,6 +53,25 @@ test('saved layer updates the addressed session only', () => {
 });
 
 
+test('saved layer does not overwrite edits made while request was pending', () => {
+  resetStore();
+  store.model.universal = [{ content: 'local edit' }];
+  store.editSeq = { universal: 1 };
+
+  const applied = acceptSavedLayer(
+    'universal',
+    [{ content: 'server snapshot' }],
+    'new-rev',
+    'a',
+    0,
+  );
+
+  assert.equal(applied, false);
+  assert.equal(store.snapshot.universal.a[0].content, 'server snapshot');
+  assert.equal(store.model.universal[0].content, 'local edit');
+});
+
+
 test('api unwrap keeps direct values and unwraps envelopes', () => {
   assert.deepEqual(unwrap({ status: 'ok', data: { value: 1 } }), { value: 1 });
   assert.deepEqual(unwrap({ value: 1 }), { value: 1 });
@@ -131,4 +150,6 @@ test('css keeps compact radii and nonnegative letter spacing', async () => {
   assert.equal(radii.length, 3);
   assert.ok(radii.every((radius) => radius <= 8));
   assert.doesNotMatch(css, /letter-spacing:\s*-/);
+  assert.doesNotMatch(css, /\.bg-orb|radial-gradient\(/);
+  assert.match(css, /--radius-(sm|md|lg|xl):\s*(4|6|8)px/g);
 });

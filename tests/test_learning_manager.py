@@ -210,6 +210,34 @@ async def _valid_empty_universal_clears_existing(tmp_path):
     await data_manager.force_save()
 
 
+def test_oversized_universal_response_preserves_layers_and_history(tmp_path):
+    run(_oversized_universal_response_preserves_layers_and_history(tmp_path))
+
+
+async def _oversized_universal_response_preserves_layers_and_history(tmp_path):
+    provider = FakeProvider(make_response(valid_payload(
+        universal=[f"风格 {index}" for index in range(11)],
+    )))
+    manager, data_manager = make_manager(tmp_path, provider)
+    data_manager.replace_universal("s1", ["原有风格"])
+    data_manager.add_contextual("s1", "原有场景", "原有行为")
+    data_manager.add_or_update_specific("s1", "原有梗", "原有梗")
+    for sender, content in (("a", "one"), ("b", "two")):
+        data_manager.add_message_to_history("s1", {
+            "sender": sender,
+            "content": content,
+        })
+    await data_manager.force_save()
+    before_layers = data_manager.get_session_layers("s1")
+    before_history = data_manager.get_chat_history("s1")
+
+    result = await manager.analyze_and_learn("s1")
+
+    assert result == LearnResult(False, "invalid_response")
+    assert data_manager.get_session_layers("s1") == before_layers
+    assert data_manager.get_chat_history("s1") == before_history
+
+
 def test_messages_arriving_during_analysis_are_preserved(tmp_path):
     run(_messages_arriving_during_analysis_are_preserved(tmp_path))
 

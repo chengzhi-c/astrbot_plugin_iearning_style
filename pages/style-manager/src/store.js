@@ -32,6 +32,7 @@ export const store = {
   sid: null,         // 当前选中的会话
   model: null,       // 当前会话三层表征的可编辑副本
   dirty: {},         // { universal, contextual, specific } 是否未保存
+  editSeq: {},       // 每层本地编辑序号，用于保护保存请求期间的新修改
   tab: 'overview',   // 当前 Tab
   sessFilter: '',    // 侧栏会话检索
   layerFilter: '',   // 当前层内检索
@@ -44,7 +45,19 @@ export function revisionFor(key, sid = store.sid) {
   return store.snapshot?.revisions?.[key]?.[sid] || null;
 }
 
-export function acceptSavedLayer(key, entries, revision, sid = store.sid) {
+/** 会话主展示名；旧后端或尚未收到群名时回退为会话 ID。 */
+export function sessionDisplayName(sid) {
+  const name = store.snapshot?.session_names?.[sid];
+  return typeof name === 'string' && name.trim() ? name : sid;
+}
+
+export function acceptSavedLayer(
+  key,
+  entries,
+  revision,
+  sid = store.sid,
+  expectedEditSeq = null,
+) {
   if (!sid || !store.snapshot) return false;
   store.snapshot[key] ||= {};
   store.snapshot[key][sid] = clone(entries);
@@ -52,6 +65,7 @@ export function acceptSavedLayer(key, entries, revision, sid = store.sid) {
   store.snapshot.revisions[key] ||= {};
   store.snapshot.revisions[key][sid] = revision;
   if (store.sid !== sid) return false;
+  if (expectedEditSeq !== null && (store.editSeq?.[key] ?? 0) !== expectedEditSeq) return false;
   store.model[key] = clone(entries);
   return true;
 }
@@ -94,6 +108,7 @@ function rebuildModel(sid) {
 export function selectSession(sid) {
   store.sid = sid;
   store.dirty = {};
+  store.editSeq = {};
   store.layerFilter = '';
   store.tab = 'overview';
   rebuildModel(sid);

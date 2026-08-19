@@ -4,7 +4,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
 
-from .learning_style.data_manager import DataManager
+from .learning_style.data_manager import DataManager, StorageRecoveryError
 from .learning_style.learning_manager import LearningManager
 from .learning_style.scheduler import Scheduler
 from .learning_style.style_injector import StyleInjector
@@ -16,6 +16,29 @@ _LEARN_FAILURE_MESSAGES = {
     "provider_error": "学习分析失败：LLM 提供商调用失败。",
     "invalid_response": "学习分析失败：LLM 返回内容无效。",
 }
+_RECOVERY_FAILURE_MESSAGE = "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。"
+
+
+def _group_name_from_event(event: AstrMessageEvent) -> str:
+    """从 AstrBot 消息事件提取平台已提供的群名。"""
+    message_obj = getattr(event, "message_obj", None)
+    raw_message = getattr(message_obj, "raw_message", None)
+    if isinstance(raw_message, dict):
+        raw_group_name = raw_message.get("group_name")
+    elif hasattr(raw_message, "__dict__"):
+        raw_group_name = raw_message.__dict__.get("group_name")
+    else:
+        raw_group_name = None
+
+    sender = getattr(message_obj, "sender", None)
+    for value in (
+        raw_group_name,
+        getattr(message_obj, "group_name", None),
+        getattr(sender, "group_name", None),
+    ):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 @register(
@@ -30,8 +53,19 @@ class IearningStylePlugin(Star):
         super().__init__(context)
         self.config = config
         plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_iearning_style")
+        self._storage_error: str | None = None
+        self.data_manager = None
+        self.learning_manager = None
+        self.scheduler = None
+        self.style_injector = None
+        self.style_page = None
 
-        self.data_manager = DataManager(plugin_data_dir, self.config)
+        try:
+            self.data_manager = DataManager(plugin_data_dir, self.config)
+        except StorageRecoveryError as exc:
+            self._storage_error = str(exc)
+            logger.error("风格数据恢复失败，插件未启动: %s", exc)
+            return
         self.learning_manager = LearningManager(self, self.data_manager, self.config)
         self.scheduler = Scheduler(
             self.data_manager, self.learning_manager, self.config
@@ -42,12 +76,17 @@ class IearningStylePlugin(Star):
         )
 
     async def initialize(self):
+        if getattr(self, "_storage_error", None):
+            logger.error("风格插件因数据恢复错误保持未启动状态。")
+            return
         self.scheduler.start()
         self.style_page.register()
         logger.info("学习风格插件已加载并启动定时任务。")
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
+        if getattr(self, "_storage_error", None):
+            return
         if event.get_sender_id() == event.get_self_id():
             return
 
@@ -62,11 +101,16 @@ class IearningStylePlugin(Star):
             "content": message_content,
             "timestamp": time.time(),
         }
+        group_name = _group_name_from_event(event)
+        if group_name:
+            message["session_name"] = group_name
 
         self.data_manager.add_message_to_history(session_id, message)
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req):
+        if getattr(self, "_storage_error", None):
+            return
         session_id = event.unified_msg_origin
 
         original_prompt = req.system_prompt or ""
@@ -78,6 +122,9 @@ class IearningStylePlugin(Star):
 
     @filter.command("风格状态")
     async def style_status(self, event: AstrMessageEvent):
+        if getattr(self, "_storage_error", None):
+            yield event.plain_result(_RECOVERY_FAILURE_MESSAGE)
+            return
         session_id = event.unified_msg_origin
         summary = self.style_injector.get_style_summary(session_id)
 
@@ -91,6 +138,9 @@ class IearningStylePlugin(Star):
 
     @filter.command("清空风格")
     async def clear_styles(self, event: AstrMessageEvent):
+        if getattr(self, "_storage_error", None):
+            yield event.plain_result(_RECOVERY_FAILURE_MESSAGE)
+            return
         session_id = event.unified_msg_origin
         self.data_manager.clear_session(session_id)
         if await self.data_manager.force_save():
@@ -103,6 +153,9 @@ class IearningStylePlugin(Star):
     @filter.command("学习总结")
     async def learn_now(self, event: AstrMessageEvent):
         """手动触发当前会话的学习分析"""
+        if getattr(self, "_storage_error", None):
+            yield event.plain_result(_RECOVERY_FAILURE_MESSAGE)
+            return
         session_id = event.unified_msg_origin
 
         yield event.plain_result("正在分析聊天记录并学习风格特征，请稍候...")
@@ -141,6 +194,9 @@ class IearningStylePlugin(Star):
             yield event.plain_result("学习分析失败：内部错误。")
 
     async def terminate(self):
+        if getattr(self, "_storage_error", None):
+            logger.info("学习风格插件在未启动状态下卸载。")
+            return
         await self.scheduler.stop()
-        await self.data_manager.force_save()
+        await self.data_manager.force_save(retry_on_failure=False)
         logger.info("学习风格插件已卸载并停止定时任务。")

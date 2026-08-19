@@ -1,7 +1,7 @@
 // sidebar.js — 会话侧栏视图：列表渲染、搜索过滤、统计脚注、抽屉关闭。
 // 数据只读 store；选中会话等流程由 app.js 编排并通过回调传入。
 
-import { store, allSids, counts } from './store.js';
+import { store, allSids, counts, sessionDisplayName } from './store.js';
 import { $, el, esc, lastActivity, relTime } from './util.js';
 import { icon } from './icons.js';
 
@@ -16,7 +16,11 @@ export function renderSidebar(onSelect) {
   if (!box) return;
   box.textContent = '';
   const sids = allSids()
-    .filter((s) => !store.sessFilter || s.toLowerCase().includes(store.sessFilter.toLowerCase()))
+    .filter((s) => {
+      const filter = store.sessFilter.toLowerCase();
+      return !filter || s.toLowerCase().includes(filter)
+        || sessionDisplayName(s).toLowerCase().includes(filter);
+    })
     .sort((a, b) => lastActivity(b, store.snapshot) - lastActivity(a, store.snapshot));
   $('sessCnt').textContent = sids.length + ' 个';
   renderSideFoot();
@@ -30,19 +34,25 @@ export function renderSidebar(onSelect) {
   sids.forEach((sid) => {
     const n = counts(sid);
     const active = sid === store.sid;
-    const d = el('button', 'sess' + (active ? ' active' : ''));
+    const displayName = sessionDisplayName(sid);
+    const d = el('button', 'session-item' + (active ? ' active' : ''));
     d.type = 'button';
+    d.title = sid;
+    d.setAttribute(
+      'aria-label',
+      displayName === sid ? sid : `${displayName}（${sid}）`,
+    );
     d.setAttribute('aria-current', active ? 'true' : 'false');
     d.innerHTML = `
-      <span class="sid-dot" style="background:${active ? 'var(--c-primary)' : 'var(--c-text-3)'}"></span>
-      <span class="sid-txt">${esc(sid)}</span>
-      <span class="sess-meta">
-        <span class="mini-stats" title="通用/情境/特定 条目数">
+      <span class="session-dot" style="background:${active ? 'var(--accent)' : 'var(--text-3)'}"></span>
+      <span class="session-id">${esc(displayName)}</span>
+      <span class="session-meta">
+        <span class="session-count" title="通用/情境/特定 条目数">
           <i style="background:var(--c-universal)"></i><u>${n.u}</u>
           <i style="background:var(--c-contextual)"></i><u>${n.c}</u>
           <i style="background:var(--c-specific)"></i><u>${n.p}</u>
         </span>
-        <span class="sess-time" title="最近活动">${relTime(lastActivity(sid, store.snapshot))}</span>
+        <span class="session-time" title="最近活动">${relTime(lastActivity(sid, store.snapshot))}</span>
       </span>`;
     d.addEventListener('click', () => onSelect?.(sid));
     box.appendChild(d);

@@ -15,9 +15,8 @@ PROJECT_PARENT = PROJECT_ROOT.parent
 if str(PROJECT_PARENT) not in sys.path:
     sys.path.insert(0, str(PROJECT_PARENT))
 
-IearningStylePlugin = importlib.import_module(
-    f"{PROJECT_ROOT.name}.main"
-).IearningStylePlugin
+main_module = importlib.import_module(f"{PROJECT_ROOT.name}.main")
+IearningStylePlugin = main_module.IearningStylePlugin
 
 
 class FakeEvent:
@@ -50,6 +49,14 @@ class FakeDataManager:
 
     async def force_save(self):
         return self.save_result
+
+
+class RecordingDataManager:
+    def __init__(self):
+        self.messages = []
+
+    def add_message_to_history(self, session_id, message):
+        self.messages.append((session_id, message))
 
 
 class FakeInjector:
@@ -126,6 +133,69 @@ def test_learn_command_hides_unexpected_exception_details():
 
     assert outputs[-1] == "学习分析失败：内部错误。"
     assert "sensitive provider detail" not in outputs[-1]
+
+
+def test_message_hook_records_group_name_from_raw_message():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+    event = SimpleNamespace(
+        unified_msg_origin="group:123",
+        message_obj=SimpleNamespace(
+            raw_message={"group_name": "开发讨论群"},
+            sender=SimpleNamespace(),
+        ),
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages == [
+        ("group:123", {
+            "sender": "小明",
+            "content": "大家好",
+            "timestamp": data_manager.messages[0][1]["timestamp"],
+            "session_name": "开发讨论群",
+        })
+    ]
+
+
+def test_recovery_failure_keeps_plugin_unavailable(monkeypatch):
+    def fail_data_manager(*_args, **_kwargs):
+        raise main_module.StorageRecoveryError("unrecoverable save transaction")
+
+    monkeypatch.setattr(main_module, "DataManager", fail_data_manager)
+    plugin = IearningStylePlugin(SimpleNamespace(), {})
+
+    result = run(_exercise_unavailable_plugin(plugin))
+
+    assert plugin.data_manager is None
+    assert plugin.scheduler is None
+    assert plugin.style_page is None
+    assert result["prompt"] == "original"
+    assert result["commands"] == [
+        "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。",
+        "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。",
+        "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。",
+    ]
+
+
+async def _exercise_unavailable_plugin(plugin):
+    await plugin.initialize()
+    await plugin.on_message(SimpleNamespace())
+    request = SimpleNamespace(system_prompt="original")
+    await plugin.on_llm_request(SimpleNamespace(), request)
+    commands = []
+    for command in (
+        IearningStylePlugin.style_status,
+        IearningStylePlugin.clear_styles,
+        IearningStylePlugin.learn_now,
+    ):
+        commands.extend([item async for item in command(plugin, FakeEvent())])
+    await plugin.terminate()
+    return {"prompt": request.system_prompt, "commands": commands}
 
 
 async def _collect_plugin_output(plugin):

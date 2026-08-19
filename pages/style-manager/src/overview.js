@@ -82,7 +82,7 @@ export function renderOverview(onLearn) {
       title: '这个会话还没有学习数据',
       desc: '插件会在聊天记录积累后自动学习，也可以手动触发「立即学习」，或在聊天里发送「学习总结」。',
       art: 'chat',
-    }) + `<button class="btn primary" id="ovLearn">${icon('sparkles', 15)} 立即学习</button></div>`;
+    }) + `<button class="btn btn-primary" id="ovLearn">${icon('sparkles', 15)} 立即学习</button></div>`;
     const ov = $('ovLearn');
     if (ov) ov.onclick = () => onLearn?.();
     return;

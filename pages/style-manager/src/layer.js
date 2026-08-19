@@ -3,7 +3,7 @@
 
 import { store, LAYERS, revisionFor, acceptSavedLayer } from './store.js';
 import { Api } from './api.js';
-import { $, el, esc } from './util.js';
+import { $, el, esc, clone } from './util.js';
 import { icon } from './icons.js';
 import { toast, emptyState } from './ui.js';
 
@@ -17,6 +17,7 @@ function updateDirtyUI() {
 
 function markDirty(key) {
   store.dirty[key] = true;
+  store.editSeq[key] = (store.editSeq[key] || 0) + 1;
   const p = $('panel-' + key);
   if (p) p.classList.add('dirty');
   updateDirtyUI();
@@ -54,8 +55,8 @@ export function renderLayer(key, onSaved) {
         <span class="dirty-tag"><span class="d"></span>未保存</span>
         <span class="sp"></span>
         <span class="meta${capCls}" id="cnt-${key}" title="${showCap ? '容量 ' + cap + ' 条' : ''}">${capText}</span>
-        <button class="btn sm soft" id="add-${key}">${icon('plus', 13)} 添加</button>
-        <button class="btn sm primary" id="save-${key}">${icon('check', 13)} 保存本层</button>
+        <button class="btn btn-sm btn-soft" id="add-${key}">${icon('plus', 13)} 添加</button>
+        <button class="btn btn-sm btn-primary" id="save-${key}">${icon('check', 13)} 保存本层</button>
         <div class="hint">${HINTS[key]}</div>
       </div>
       <div class="panel-body">
@@ -251,9 +252,11 @@ export async function saveLayer(key, { quiet = false, onSaved } = {}) {
     return { ok: false, code: 'missing_revision' };
   }
 
+  const editSeq = store.editSeq[key] || 0;
+  const payload = clone(store.model[key]);
   let result;
   try {
-    result = await Api.saveLayer(sid, key, store.model[key], baseRevision);
+    result = await Api.saveLayer(sid, key, payload, baseRevision);
   } catch (e) {
     const conflict = e?.code === 'revision_conflict';
     if (!quiet) toast(conflict ? '服务器数据已更新，请刷新后重新合并' : '保存失败：' + (e?.message || e), 'error');
@@ -261,9 +264,13 @@ export async function saveLayer(key, { quiet = false, onSaved } = {}) {
     return { ok: false, code: conflict ? 'revision_conflict' : (e?.code || 'save_failed') };
   }
 
-  const currentSession = acceptSavedLayer(key, result.entries, result.revision, sid);
+  const currentSession = acceptSavedLayer(
+    key, result.entries, result.revision, sid, editSeq,
+  );
   if (currentSession) clearDirty(key);
-  if (!quiet) toast(`已保存${LAYERS.find((l) => l.key === key).name}层`);
+  if (!quiet) toast(currentSession
+    ? `已保存${LAYERS.find((l) => l.key === key).name}层`
+    : '服务器版本已保存，后续本地修改仍待保存');
   if (btn) { btn.disabled = false; btn.innerHTML = old; }
   if (currentSession) renderRows(key);
   onSaved?.();
