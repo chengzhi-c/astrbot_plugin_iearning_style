@@ -158,7 +158,8 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     const frame = page.frames().find((candidate) => candidate.parentFrame() === page.mainFrame());
     assert.ok(frame);
     await frame.waitForSelector('#curSid');
-    assert.equal(await frame.locator('#curSid').textContent(), 'a:test');
+    assert.equal(await frame.locator('#curSid').textContent(), '开发讨论群');
+    assert.equal(await frame.locator('#curSid').getAttribute('title'), 'a:test');
     assert.equal(await frame.locator('.session-item').first().locator('.session-id').textContent(), '开发讨论群');
     assert.equal(await frame.locator('.session-item').first().getAttribute('title'), 'a:test');
 
@@ -184,7 +185,8 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     const otherSession = frame.getByRole('button', { name: /z:other/ });
     await otherSession.focus();
     await otherSession.press('Enter');
-    assert.equal(await frame.locator('#curSid').textContent(), 'z:other');
+    assert.equal(await frame.locator('#curSid').textContent(), '产品反馈群');
+    assert.equal(await frame.locator('#curSid').getAttribute('title'), 'z:other');
     assert.equal(await frame.locator('#ovPortrait').textContent(),
       '通用风格：（暂无）；情境提示：其他场景→其他行为；特定层数据：<img src=x onerror="window.__XSS=1">');
     assert.deepEqual(await frame.locator('.donut circle').evaluateAll((nodes) =>
@@ -196,7 +198,7 @@ test('official sandbox boots and preserves critical workflows', { timeout: 45000
     const firstSession = frame.getByRole('button', { name: /a:test/ });
     await firstSession.focus();
     await firstSession.press('Space');
-    assert.equal(await frame.locator('#curSid').textContent(), 'a:test');
+    assert.equal(await frame.locator('#curSid').textContent(), '开发讨论群');
 
     await frame.getByRole('tab', { name: '特定' }).click();
     const specificRegex = frame.locator('input.mono').first();

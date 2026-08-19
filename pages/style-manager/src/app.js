@@ -2,7 +2,15 @@
 // 模块边界：状态在 store.js，API 在 api.js，组件在 ui.js，
 // 视图在 sidebar.js / overview.js / layer.js；本文件只做编排。
 
-import { store, allSids, selectSession, isAnyDirty, counts, LAYERS } from './store.js';
+import {
+  store,
+  allSids,
+  selectSession,
+  isAnyDirty,
+  counts,
+  LAYERS,
+  sessionDisplayName,
+} from './store.js';
 import { Api, setBridge } from './api.js';
 import { $, initTheme, toggleTheme } from './util.js';
 import { icon } from './icons.js';
@@ -26,7 +34,8 @@ function renderSessionHead() {
   if (!sid) return;
   const n = counts(sid);
   const inj = store.injectOn;
-  $('curSid').textContent = sid;
+  $('curSid').textContent = sessionDisplayName(sid);
+  $('curSid').title = sid;
   $('curChips').innerHTML = `
     <span class="chip"><i style="background:var(--c-universal)"></i>通用 ${n.u}</span>
     <span class="chip"><i style="background:var(--c-contextual)"></i>情境 ${n.c}</span>
