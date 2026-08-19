@@ -76,16 +76,17 @@ async def _group_name_from_event(event: AstrMessageEvent) -> str:
             return name
 
     get_group = getattr(event, "get_group", None)
-    if not group_id or not callable(get_group):
+    if not group_id:
         return ""
 
-    try:
-        fetched_group = get_group(group_id)
-        if inspect.isawaitable(fetched_group):
-            fetched_group = await fetched_group
-    except Exception:
-        logger.debug("获取群聊名称失败", exc_info=True)
-        fetched_group = None
+    fetched_group = None
+    if callable(get_group):
+        try:
+            fetched_group = get_group(group_id)
+            if inspect.isawaitable(fetched_group):
+                fetched_group = await fetched_group
+        except Exception:
+            logger.debug("获取群聊名称失败", exc_info=True)
 
     for value in (
         getattr(fetched_group, "group_name", None),
@@ -97,18 +98,42 @@ async def _group_name_from_event(event: AstrMessageEvent) -> str:
 
     bot = getattr(event, "bot", None)
     call_action = getattr(bot, "call_action", None)
-    if not callable(call_action):
-        return ""
-
     platform_group_id = (
         int(group_id) if isinstance(group_id, str) and group_id.isdigit() else group_id
     )
+    if callable(call_action):
+        try:
+            group_info = call_action("get_group_info", group_id=platform_group_id)
+            if inspect.isawaitable(group_info):
+                group_info = await group_info
+        except Exception:
+            logger.debug("通过平台接口获取群聊名称失败", exc_info=True)
+            group_info = None
+
+        if isinstance(group_info, dict):
+            for value in (group_info.get("group_name"), group_info.get("name")):
+                name = _usable_group_name(value, group_id)
+                if name:
+                    return name
+
+    api = getattr(bot, "api", None)
+    http = getattr(api, "_http", None)
+    request = getattr(http, "request", None)
+    if not callable(request):
+        return ""
     try:
-        group_info = call_action("get_group_info", group_id=platform_group_id)
+        from botpy.http import Route
+
+        route = Route(
+            "GET",
+            "/v2/groups/{group_openid}/info",
+            group_openid=str(group_id),
+        )
+        group_info = request(route)
         if inspect.isawaitable(group_info):
             group_info = await group_info
     except Exception:
-        logger.debug("通过平台接口获取群聊名称失败", exc_info=True)
+        logger.debug("通过 QQ 官方接口获取群聊名称失败", exc_info=True)
         return ""
 
     if isinstance(group_info, dict):
@@ -171,6 +196,12 @@ class IearningStylePlugin(Star):
         session_id = event.unified_msg_origin
         message_content = event.get_message_str()
 
+        group_name = await _group_name_from_event(event)
+        if group_name:
+            set_session_name = getattr(self.data_manager, "set_session_name", None)
+            if callable(set_session_name):
+                set_session_name(session_id, group_name)
+
         if not message_content:
             return
 
@@ -179,7 +210,6 @@ class IearningStylePlugin(Star):
             "content": message_content,
             "timestamp": time.time(),
         }
-        group_name = await _group_name_from_event(event)
         if group_name:
             message["session_name"] = group_name
 

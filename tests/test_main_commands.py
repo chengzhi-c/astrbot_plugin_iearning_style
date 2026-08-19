@@ -54,9 +54,13 @@ class FakeDataManager:
 class RecordingDataManager:
     def __init__(self):
         self.messages = []
+        self.session_names = {}
 
     def add_message_to_history(self, session_id, message):
         self.messages.append((session_id, message))
+
+    def set_session_name(self, session_id, name):
+        self.session_names[session_id] = name
 
 
 class FakeInjector:
@@ -270,6 +274,62 @@ def test_message_hook_falls_back_to_platform_group_info_when_group_lookup_fails(
     run(IearningStylePlugin.on_message(plugin, event))
 
     assert data_manager.messages[-1][1]["session_name"] == "仅群信息接口可用"
+
+
+def test_message_hook_reads_qq_official_group_info_without_event_get_group():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    class Http:
+        async def request(self, route):
+            assert route.method == "GET"
+            assert route.path == "/v2/groups/{group_openid}/info"
+            assert route.parameters == {"group_openid": "272372284"}
+            return {"group_name": "QQ官方群聊名称"}
+
+    event = SimpleNamespace(
+        unified_msg_origin="阿c:GroupMessage:272372284",
+        message_obj=SimpleNamespace(
+            group_id="272372284",
+            raw_message=SimpleNamespace(group_openid="272372284"),
+            sender=SimpleNamespace(),
+        ),
+        bot=SimpleNamespace(api=SimpleNamespace(_http=Http())),
+        get_group_id=lambda: "272372284",
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "大家好",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.messages[-1][1]["session_name"] == "QQ官方群聊名称"
+
+
+def test_message_hook_saves_group_name_for_non_text_messages():
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+    event = SimpleNamespace(
+        unified_msg_origin="阿c:GroupMessage:272372284",
+        message_obj=SimpleNamespace(
+            group=SimpleNamespace(group_id="272372284", group_name="只发图片的群"),
+            raw_message={"post_type": "message"},
+            sender=SimpleNamespace(),
+        ),
+        get_group_id=lambda: "272372284",
+        get_sender_id=lambda: "user-1",
+        get_self_id=lambda: "bot-1",
+        get_sender_name=lambda: "小明",
+        get_message_str=lambda: "",
+    )
+
+    run(IearningStylePlugin.on_message(plugin, event))
+
+    assert data_manager.session_names == {
+        "阿c:GroupMessage:272372284": "只发图片的群"
+    }
+    assert data_manager.messages == []
 
 
 def test_recovery_failure_keeps_plugin_unavailable(monkeypatch):
