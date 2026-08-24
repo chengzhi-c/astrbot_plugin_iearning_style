@@ -1,156 +1,184 @@
-import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
 
-import { Api, setBridge, unwrap } from '../../pages/style-manager/src/api.js';
-import { validateLayer } from '../../pages/style-manager/src/layer.js';
+import { Api, setBridge, unwrap } from "../../pages/style-manager/src/api.js";
+import { validateLayer } from "../../pages/style-manager/src/layer.js";
 import {
-  acceptSavedLayer,
-  allSids,
-  counts,
-  revisionFor,
-  store,
-} from '../../pages/style-manager/src/store.js';
+	acceptSavedLayer,
+	allSids,
+	counts,
+	revisionFor,
+	store,
+} from "../../pages/style-manager/src/store.js";
 import {
-  buildFullDataPreview,
-  donutSegments,
-} from '../../pages/style-manager/src/overview.js';
-
+	buildFullDataPreview,
+	donutSegments,
+} from "../../pages/style-manager/src/overview.js";
 
 function resetStore() {
-  store.snapshot = {
-    universal: { b: [{ content: 'u' }] },
-    contextual: { a: [{ scene: 's', behavior: 'b' }] },
-    specific: { b: [{ content: 'p', trigger_regex: 'p' }] },
-    session_names: { c: '尚未分析的群聊' },
-    revisions: {
-      universal: { a: 'ua', b: 'ub' },
-      contextual: { a: 'ca', b: 'cb' },
-      specific: { a: 'sa', b: 'sb' },
-    },
-  };
-  store.sid = 'a';
-  store.model = { universal: [], contextual: [], specific: [] };
-  store.dirty = {};
-  store.caps = { universal: 10, contextual: 150, specific: 200 };
+	store.snapshot = {
+		universal: { b: [{ content: "u" }] },
+		contextual: { a: [{ scene: "s", behavior: "b" }] },
+		specific: { b: [{ content: "p", trigger_regex: "p" }] },
+		session_names: { c: "尚未分析的群聊" },
+		revisions: {
+			universal: { a: "ua", b: "ub" },
+			contextual: { a: "ca", b: "cb" },
+			specific: { a: "sa", b: "sb" },
+		},
+	};
+	store.sid = "a";
+	store.model = { universal: [], contextual: [], specific: [] };
+	store.dirty = {};
+	store.caps = { universal: 10, contextual: 150, specific: 200 };
 }
 
-
-test('store derives stable sessions and counts', () => {
-  resetStore();
-  assert.deepEqual(allSids(), ['a', 'b', 'c']);
-  assert.deepEqual(counts('b'), { u: 1, c: 0, p: 1 });
-  assert.equal(revisionFor('contextual'), 'ca');
+test("store derives stable sessions and counts", () => {
+	resetStore();
+	assert.deepEqual(allSids(), ["a", "b", "c"]);
+	assert.deepEqual(counts("b"), { u: 1, c: 0, p: 1 });
+	assert.equal(revisionFor("contextual"), "ca");
 });
 
-
-test('saved layer updates the addressed session only', () => {
-  resetStore();
-  const applied = acceptSavedLayer('universal', [{ content: 'new' }], 'new-rev', 'b');
-  assert.equal(applied, false);
-  assert.equal(store.snapshot.universal.b[0].content, 'new');
-  assert.equal(store.snapshot.revisions.universal.b, 'new-rev');
-  assert.deepEqual(store.model.universal, []);
+test("saved layer updates the addressed session only", () => {
+	resetStore();
+	const applied = acceptSavedLayer(
+		"universal",
+		[{ content: "new" }],
+		"new-rev",
+		"b",
+	);
+	assert.equal(applied, false);
+	assert.equal(store.snapshot.universal.b[0].content, "new");
+	assert.equal(store.snapshot.revisions.universal.b, "new-rev");
+	assert.deepEqual(store.model.universal, []);
 });
 
+test("saved layer does not overwrite edits made while request was pending", () => {
+	resetStore();
+	store.model.universal = [{ content: "local edit" }];
+	store.editSeq = { universal: 1 };
 
-test('saved layer does not overwrite edits made while request was pending', () => {
-  resetStore();
-  store.model.universal = [{ content: 'local edit' }];
-  store.editSeq = { universal: 1 };
+	const applied = acceptSavedLayer(
+		"universal",
+		[{ content: "server snapshot" }],
+		"new-rev",
+		"a",
+		0,
+	);
 
-  const applied = acceptSavedLayer(
-    'universal',
-    [{ content: 'server snapshot' }],
-    'new-rev',
-    'a',
-    0,
-  );
-
-  assert.equal(applied, false);
-  assert.equal(store.snapshot.universal.a[0].content, 'server snapshot');
-  assert.equal(store.model.universal[0].content, 'local edit');
+	assert.equal(applied, false);
+	assert.equal(store.snapshot.universal.a[0].content, "server snapshot");
+	assert.equal(store.model.universal[0].content, "local edit");
 });
 
-
-test('api unwrap keeps direct values and unwraps envelopes', () => {
-  assert.deepEqual(unwrap({ status: 'ok', data: { value: 1 } }), { value: 1 });
-  assert.deepEqual(unwrap({ value: 1 }), { value: 1 });
-  assert.equal(unwrap(null), null);
+test("api unwrap keeps direct values and unwraps envelopes", () => {
+	assert.deepEqual(unwrap({ status: "ok", data: { value: 1 } }), { value: 1 });
+	assert.deepEqual(unwrap({ value: 1 }), { value: 1 });
+	assert.equal(unwrap(null), null);
 });
 
+test("api deduplicate posts the addressed session and unwraps counts", async () => {
+	let call;
+	setBridge({
+		async apiPost(path, body) {
+			call = { path, body };
+			return { status: "ok", data: { total_removed: 2 } };
+		},
+	});
 
-test('api deduplicate posts the addressed session and unwraps counts', async () => {
-  let call;
-  setBridge({
-    async apiPost(path, body) {
-      call = { path, body };
-      return { status: 'ok', data: { total_removed: 2 } };
-    },
-  });
-
-  assert.deepEqual(await Api.deduplicate('s1'), { total_removed: 2 });
-  assert.deepEqual(call, { path: 'deduplicate', body: { sid: 's1' } });
-  setBridge(null);
+	assert.deepEqual(await Api.deduplicate("s1"), { total_removed: 2 });
+	assert.deepEqual(call, { path: "deduplicate", body: { sid: "s1" } });
+	setBridge(null);
 });
 
-
-test('donut segments retain semantic colors after zero filtering', () => {
-  assert.deepEqual(donutSegments({ u: 0, c: 2, p: 3 }), [
-    { key: 'contextual', value: 2 },
-    { key: 'specific', value: 3 },
-  ]);
+test("donut segments retain semantic colors after zero filtering", () => {
+	assert.deepEqual(donutSegments({ u: 0, c: 2, p: 3 }), [
+		{ key: "contextual", value: 2 },
+		{ key: "specific", value: 3 },
+	]);
 });
 
-
-test('full preview labels specific data accurately', () => {
-  assert.equal(buildFullDataPreview({
-    universal: [{ content: '简短' }],
-    contextual: [{ scene: '问候', behavior: '回应' }],
-    specific: [{ content: '内部梗' }],
-  }), '通用风格：简短；情境提示：问候→回应；特定层数据：内部梗');
+test("full preview labels specific data accurately", () => {
+	assert.equal(
+		buildFullDataPreview({
+			universal: [{ content: "简短" }],
+			contextual: [{ scene: "问候", behavior: "回应" }],
+			specific: [{ content: "内部梗" }],
+		}),
+		"通用风格：简短；情境提示：问候→回应；特定层数据：内部梗",
+	);
 });
 
-
-test('layer validation catches empty and duplicate entries before save-all', () => {
-  resetStore();
-  store.model.universal = [{ content: 'same' }, { content: 'same' }];
-  assert.equal(validateLayer('universal').ok, false);
+test("layer validation catches empty and duplicate entries before save-all", () => {
+	resetStore();
+	store.model.universal = [{ content: "same" }, { content: "same" }];
+	assert.equal(validateLayer("universal").ok, false);
 });
 
+test("specific validation allows same content with different regexes", () => {
+	resetStore();
+	store.model.specific = [
+		{ content: "same", trigger_regex: "one" },
+		{ content: "same", trigger_regex: "two" },
+	];
 
-test('specific validation allows same content with different regexes', () => {
-  resetStore();
-  store.model.specific = [
-    { content: 'same', trigger_regex: 'one' },
-    { content: 'same', trigger_regex: 'two' },
-  ];
-
-  assert.equal(validateLayer('specific').ok, true);
-  store.model.specific[1] = { content: ' ｓａｍｅ ', trigger_regex: 'one' };
-  assert.equal(validateLayer('specific').ok, false);
+	assert.equal(validateLayer("specific").ok, true);
+	store.model.specific[1] = { content: " ｓａｍｅ ", trigger_regex: "one" };
+	assert.equal(validateLayer("specific").ok, false);
 });
 
+test("specific layer accepts backend-valid inline regex flags", () => {
+	resetStore();
+	store.model.specific = [{ content: "RJW", trigger_regex: "(?i)rjw" }];
 
-test('specific layer accepts backend-valid inline regex flags', () => {
-  resetStore();
-  store.model.specific = [{ content: 'RJW', trigger_regex: '(?i)rjw' }];
-
-  assert.equal(validateLayer('specific').ok, true);
+	assert.equal(validateLayer("specific").ok, true);
 });
 
+test("css keeps compact radii and nonnegative letter spacing", async () => {
+	const css = await readFile(
+		new URL("../../pages/style-manager/styles.css", import.meta.url),
+		"utf8",
+	);
+	const radii = [...css.matchAll(/--r-[123]:\s*(\d+)px/g)].map((match) =>
+		Number(match[1]),
+	);
 
-test('css keeps compact radii and nonnegative letter spacing', async () => {
-  const css = await readFile(
-    new URL('../../pages/style-manager/styles.css', import.meta.url),
-    'utf8',
-  );
-  const radii = [...css.matchAll(/--r-[123]:\s*(\d+)px/g)]
-    .map((match) => Number(match[1]));
+	assert.equal(radii.length, 3);
+	assert.ok(radii.every((radius) => radius <= 8));
+	assert.doesNotMatch(css, /letter-spacing:\s*-/);
+	assert.doesNotMatch(css, /\.bg-orb|radial-gradient\(/);
+	assert.match(css, /--radius-(sm|md|lg|xl):\s*(4|6|8)px/g);
+});
 
-  assert.equal(radii.length, 3);
-  assert.ok(radii.every((radius) => radius <= 8));
-  assert.doesNotMatch(css, /letter-spacing:\s*-/);
-  assert.doesNotMatch(css, /\.bg-orb|radial-gradient\(/);
-  assert.match(css, /--radius-(sm|md|lg|xl):\s*(4|6|8)px/g);
+test("confirm modal uses CSS button variants", async () => {
+	const ui = await readFile(
+		new URL("../../pages/style-manager/src/ui.js", import.meta.url),
+		"utf8",
+	);
+
+	assert.match(ui, /btn-danger/);
+	assert.match(ui, /btn-primary/);
+	assert.doesNotMatch(ui, /\? 'danger' : 'primary'/);
+});
+
+test("overview inject copy matches safety-bounded instruction", async () => {
+	const overview = await readFile(
+		new URL("../../pages/style-manager/src/overview.js", import.meta.url),
+		"utf8",
+	);
+
+	assert.doesNotMatch(overview, /强约束/);
+	assert.match(overview, /不得覆盖原有身份、安全要求或任务约束/);
+});
+
+test("help documents specific regex ReDoS constraints", async () => {
+	const html = await readFile(
+		new URL("../../pages/style-manager/index.html", import.meta.url),
+		"utf8",
+	);
+
+	assert.match(html, /嵌套量词/);
+	assert.match(html, /[≤<=]200/);
 });

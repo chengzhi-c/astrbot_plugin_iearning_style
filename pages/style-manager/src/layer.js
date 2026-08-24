@@ -41,33 +41,41 @@ export function renderLayer(key, onSaved) {
   const L = LAYERS.find((l) => l.key === key);
   const list = store.model[key];
   const cap = (store.caps && store.caps[key]) ?? ({ universal: 10, contextual: 150, specific: 200 })[key];
-  // 容量提示：仅对有意义的上限（通用=10）给出进度/告警，其余只显示条数
   const showCap = key === 'universal';
   const ratio = showCap && cap > 0 ? list.length / cap : 0;
   const capCls = !showCap ? '' : ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '';
   const capText = showCap ? `${list.length} / ${cap} 条` : `${list.length} 条`;
   const el = $('tabLayer');
   el.innerHTML = `
-    <div class="panel ${store.dirty[key] ? 'dirty' : ''}" id="panel-${key}">
+    <div class="panel ${store.dirty[key] ? 'dirty' : ''} layer-panel-${key}" id="panel-${key}">
       <div class="panel-head">
-        <div class="ttl">${icon(L.icon, 15)}
-          <span class="ttl-dot" style="background:${L.color}"></span>${L.name}表征</div>
-        <span class="dirty-tag"><span class="d"></span>未保存</span>
-        <span class="sp"></span>
-        <span class="meta${capCls}" id="cnt-${key}" title="${showCap ? '容量 ' + cap + ' 条' : ''}">${capText}</span>
-        <button class="btn btn-sm btn-soft" id="add-${key}">${icon('plus', 13)} 添加</button>
-        <button class="btn btn-sm btn-primary" id="save-${key}">${icon('check', 13)} 保存本层</button>
-        <div class="hint">${HINTS[key]}</div>
+        <div class="ttl">
+          <div class="ttl-icon-box" style="background:${L.soft}; color:${L.color}">
+            ${icon(L.icon, 16)}
+          </div>
+          <div class="ttl-info">
+            <div class="ttl-title-row">
+              <span class="ttl-name">${L.name}表征</span>
+              <span class="dirty-tag"><span class="d"></span>未保存变更</span>
+            </div>
+            <div class="hint">${HINTS[key]}</div>
+          </div>
+        </div>
+        <div class="panel-head-actions">
+          <span class="meta${capCls}" id="cnt-${key}" title="${showCap ? '容量上限 ' + cap + ' 条' : ''}">${capText}</span>
+          <button class="btn btn-sm btn-soft" id="add-${key}">${icon('plus', 13)} 添加条目</button>
+          <button class="btn btn-sm btn-primary" id="save-${key}">${icon('check', 13)} 保存本层</button>
+        </div>
       </div>
       <div class="panel-body">
         <div class="layer-toolbar">
           <div class="search2">
             ${icon('search', 14)}
-            <input id="filt-${key}" type="text" placeholder="在本层内检索…" value="${esc(store.layerFilter)}" aria-label="层内检索">
+            <input id="filt-${key}" type="text" placeholder="检索本层条目与关键词..." value="${esc(store.layerFilter)}" aria-label="层内检索">
           </div>
           <span class="toolbar-status" id="status-${key}"></span>
         </div>
-        <div id="rows-${key}"></div>
+        <div class="rows-container" id="rows-${key}"></div>
       </div>
     </div>`;
   $('add-' + key).onclick = () => addRow(key);
@@ -95,16 +103,17 @@ export function renderRows(key) {
 
   if (!list.length) {
     wrap.innerHTML = emptyState({
-      title: '暂无条目',
-      desc: '点「＋ 添加」手动新增，或等插件自动学习。',
+      title: '暂无表征条目',
+      desc: '点击上方「＋ 添加条目」进行手动定义，或由机器人与群友交互后自动分析提取。',
       art: 'empty',
     });
   } else if (!filtered.length) {
     wrap.innerHTML = `<div class="empty-state small">
-      <div class="es-title">无匹配「${esc(store.layerFilter)}」的条目</div>
+      <div class="es-title">未找到匹配「${esc(store.layerFilter)}」的条目</div>
+      <div class="es-desc">请尝试其他关键词</div>
     </div>`;
   } else {
-    filtered.forEach((entry) => wrap.appendChild(buildRow(key, entry)));
+    filtered.forEach((entry, idx) => wrap.appendChild(buildRow(key, entry, idx)));
   }
   const cnt = $('cnt-' + key);
   if (cnt) {
@@ -118,13 +127,22 @@ export function renderRows(key) {
   if (st) st.textContent = filtered.length === list.length ? '' : `显示 ${filtered.length}/${list.length}`;
 }
 
-function buildRow(key, entry) {
-  const row = el('div', 'row');
+function buildRow(key, entry, idx) {
+  const row = el('div', 'row card-row');
+  const indexBadge = el('span', 'row-idx');
+  indexBadge.textContent = String(idx + 1).padStart(2, '0');
+  row.appendChild(indexBadge);
+
   if (key === 'universal') {
+    const fieldWrap = el('div', 'row-field-wrap');
     const inp = el('input', 'inp');
     inp.value = entry.content;
     inp.placeholder = '风格描述，如：语气活泼、爱用短句';
     inp.addEventListener('input', () => { entry.content = inp.value; markDirty(key); });
+    fieldWrap.appendChild(inp);
+    row.appendChild(fieldWrap);
+
+    const metaWrap = el('div', 'row-meta-wrap');
     const meta = el('span', 'meta');
     meta.title = 'proficiency 熟练度 / confirmed_rounds 确认轮次';
     meta.textContent = `熟 ${entry.proficiency ?? 10} · 轮 ${entry.confirmed_rounds ?? 1}`;
@@ -133,34 +151,62 @@ function buildRow(key, entry) {
     const fill = el('span');
     fill.style.width = Math.min(100, entry.proficiency ?? 0) + '%';
     pbar.appendChild(fill);
-    row.append(inp, meta, pbar);
+    metaWrap.append(meta, pbar);
+    row.appendChild(metaWrap);
   } else if (key === 'contextual') {
+    const pairWrap = el('div', 'row-pair-wrap');
+    
+    const sBox = el('div', 'row-field-group');
+    const sLabel = el('span', 'field-tag');
+    sLabel.textContent = '场景';
     const sInp = el('input', 'inp');
     sInp.value = entry.scene;
     sInp.placeholder = '场景，如：有人发消息';
+    sBox.append(sLabel, sInp);
+
     const arrow = el('span', 'arrow');
     arrow.textContent = '→';
+
+    const bBox = el('div', 'row-field-group');
+    const bLabel = el('span', 'field-tag');
+    bLabel.textContent = '行为';
     const bInp = el('input', 'inp');
     bInp.value = entry.behavior;
     bInp.placeholder = '群体反应，如：全员复读';
+    bBox.append(bLabel, bInp);
+
     sInp.addEventListener('input', () => { entry.scene = sInp.value; markDirty(key); });
     bInp.addEventListener('input', () => { entry.behavior = bInp.value; markDirty(key); });
-    row.append(sInp, arrow, bInp);
+    pairWrap.append(sBox, arrow, bBox);
+    row.appendChild(pairWrap);
+
     if (entry._in_buffer) {
       const buf = el('span', 'buf');
       buf.title = '缓冲位条目：等待维护任务合并或确认';
       buf.innerHTML = icon('clock', 11) + '<span>缓冲</span>';
-      row.append(buf);
+      row.appendChild(buf);
     }
   } else {
+    const specWrap = el('div', 'row-pair-wrap');
+    
+    const cBox = el('div', 'row-field-group');
+    const cLabel = el('span', 'field-tag');
+    cLabel.textContent = '词条/释义';
     const cInp = el('input', 'inp');
     cInp.value = entry.content;
     cInp.placeholder = '梗+释义，如：awsl（啊我死了）';
+    cBox.append(cLabel, cInp);
+
+    const rBox = el('div', 'row-field-group');
+    const rLabel = el('span', 'field-tag mono');
+    rLabel.textContent = '触发正则';
     const rInp = el('input', 'inp mono');
     const invalid = typeof entry.trigger_regex !== 'string' || !entry.trigger_regex.trim();
     if (invalid) rInp.classList.add('invalid');
     rInp.value = entry.trigger_regex || '';
     rInp.placeholder = '触发正则，如：awsl|啊我死了';
+    rBox.append(rLabel, rInp);
+
     cInp.addEventListener('input', () => { entry.content = cInp.value; markDirty(key); });
     rInp.addEventListener('input', () => {
       entry.trigger_regex = rInp.value;
@@ -168,10 +214,13 @@ function buildRow(key, entry) {
       rInp.classList.toggle('invalid', bad);
       markDirty(key);
     });
-    const meta = el('span', 'meta');
+    specWrap.append(cBox, rBox);
+    row.appendChild(specWrap);
+
+    const meta = el('span', 'meta trig-meta');
     meta.title = 'trigger_count 触发次数';
     meta.innerHTML = icon('zap', 11) + '<span>触发 ' + (entry.trigger_count || 1) + '</span>';
-    row.append(cInp, rInp, meta);
+    row.appendChild(meta);
   }
 
   const del = el('button', 'del');
@@ -184,7 +233,7 @@ function buildRow(key, entry) {
     markDirty(key);
     renderRows(key);
   });
-  row.append(del);
+  row.appendChild(del);
   return row;
 }
 

@@ -11,6 +11,13 @@ function totalEntries() {
   return t;
 }
 
+/** 生成会话头像文本/简写 */
+function sessionAvatarText(name) {
+  if (!name) return '会';
+  const clean = name.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+  return clean.slice(0, 1) || name.slice(0, 1) || '会';
+}
+
 export function renderSidebar(onSelect) {
   const box = $('sessList');
   if (!box) return;
@@ -35,6 +42,7 @@ export function renderSidebar(onSelect) {
     const n = counts(sid);
     const active = sid === store.sid;
     const displayName = sessionDisplayName(sid);
+    const avatar = sessionAvatarText(displayName);
     const d = el('button', 'session-item' + (active ? ' active' : ''));
     d.type = 'button';
     d.title = sid;
@@ -44,16 +52,21 @@ export function renderSidebar(onSelect) {
     );
     d.setAttribute('aria-current', active ? 'true' : 'false');
     d.innerHTML = `
-      <span class="session-dot" style="background:${active ? 'var(--accent)' : 'var(--text-3)'}"></span>
-      <span class="session-id">${esc(displayName)}</span>
-      <span class="session-meta">
-        <span class="session-count" title="通用/情境/特定 条目数">
-          <i style="background:var(--c-universal)"></i><u>${n.u}</u>
-          <i style="background:var(--c-contextual)"></i><u>${n.c}</u>
-          <i style="background:var(--c-specific)"></i><u>${n.p}</u>
-        </span>
-        <span class="session-time" title="最近活动">${relTime(lastActivity(sid, store.snapshot))}</span>
-      </span>`;
+      <div class="session-avatar ${active ? 'active' : ''}">${esc(avatar)}</div>
+      <div class="session-content-wrap">
+        <div class="session-title-row">
+          <span class="session-dot" style="background:${active ? 'var(--accent)' : 'var(--text-3)'}"></span>
+          <span class="session-id">${esc(displayName)}</span>
+        </div>
+        <div class="session-sub-row">
+          <span class="session-count" title="通用/情境/特定 条目数">
+            <span class="sc-badge sc-u"><i style="background:var(--c-universal)"></i><u>${n.u}</u></span>
+            <span class="sc-badge sc-c"><i style="background:var(--c-contextual)"></i><u>${n.c}</u></span>
+            <span class="sc-badge sc-p"><i style="background:var(--c-specific)"></i><u>${n.p}</u></span>
+          </span>
+          <span class="session-time" title="最近活动">${relTime(lastActivity(sid, store.snapshot))}</span>
+        </div>
+      </div>`;
     d.addEventListener('click', () => onSelect?.(sid));
     box.appendChild(d);
   });
@@ -62,11 +75,14 @@ export function renderSidebar(onSelect) {
 function renderSideFoot() {
   const total = totalEntries();
   $('sideFoot').innerHTML = `
-    <span class="sf-item">${icon('users', 13)} ${allSids().length} 会话</span>
+    <span class="sf-item" title="全部会话总数">${icon('users', 13)} ${allSids().length} 会话</span>
     <span class="sf-sep"></span>
-    <span class="sf-item">${icon('layers', 13)} ${total} 条目</span>
+    <span class="sf-item" title="全部表征条目总数">${icon('layers', 13)} ${total} 条目</span>
     ${store.injectOn !== null ? `<span class="sf-sep"></span>
-      <span class="sf-item">注入 ${store.injectOn ? '开' : '关'}</span>` : ''}`;
+      <span class="sf-item ${store.injectOn ? 'sf-on' : 'sf-off'}">
+        <span class="sf-dot ${store.injectOn ? 'on' : 'off'}"></span>
+        注入 ${store.injectOn ? '开' : '关'}
+      </span>` : ''}`;
 }
 
 /** 关闭移动端抽屉 */

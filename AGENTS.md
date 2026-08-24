@@ -16,14 +16,14 @@
 - 多层写入使用 roll-forward journal；启动时先恢复事务和有效临时文件，再加载正式数据。
 - 保存失败保留 dirty，`force_save()` 返回 `False`。
 - WebUI `replace_layer()` 在保存锁内复检 revision，写盘成功后才发布内存。
-- 学习结果先整体校验再一次性应用；失败不消费历史 marker。
+- 学习结果先校验顶层 schema，再一次性应用合法条目；schema 失败不消费历史 marker。
 - 旧格式迁移必须先成功写入新文件，再备份 `styles.json`。
 
 ## 三层语义
 
 - `universal`：每轮全量重写，最多 10 条，每次回复全量注入。
 - `contextual`：追加并按 FIFO 管理，最新 20% 为缓冲位，每次回复全量注入。
-- `specific`：仅正则命中当前用户消息时注入；命中后更新 `trigger_count/last_seen`。
+- `specific`：每次回复全量注入 content；正则命中后才更新 `trigger_count/last_seen`。
 - specific 去重以括号/冒号前词条及分隔别名为确定性身份；不同正则只允许合并为经过现有校验的匹配并集。
 - specific 校验必须共用 DataManager 入口。运行时限制为单模式 10ms、总预算 50ms、消息最大 10000 字符。
 

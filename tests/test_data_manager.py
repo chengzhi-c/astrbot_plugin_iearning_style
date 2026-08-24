@@ -7,6 +7,7 @@
 内部调用 asyncio.create_task，必须在事件循环内执行。
 本测试用 asyncio.run(...) 包裹此类调用。
 """
+
 import asyncio
 import copy
 import json
@@ -44,6 +45,7 @@ def _new_dm(tmp_path, **overrides):
 
 
 # ==================== 通用表征 ====================
+
 
 def test_replace_universal_marks_dirty(dm):
     run(_replace_universal_seq(dm))
@@ -85,6 +87,7 @@ async def _proficiency_seq(dm):
 
 # ==================== 情境表征 ====================
 
+
 def test_add_contextual_fifo_eviction(tmp_path):
     dm = _new_dm(tmp_path, max_contextual_per_session=3)
     run(_fifo_seq(dm))
@@ -114,6 +117,7 @@ async def _disable_merge_seq(dm):
 
 # ==================== 特定表征 + ReDoS 防护 ====================
 
+
 def test_add_or_update_specific_rejects_bad_regex(dm):
     run(_bad_regex_seq(dm, "("))
     assert "s1" not in dm.specific or len(dm.specific["s1"]) == 0
@@ -127,6 +131,23 @@ def test_add_or_update_specific_rejects_long_regex(dm):
 def test_add_or_update_specific_rejects_nested_quantifier(dm):
     run(_bad_regex_seq(dm, "(a+)+"))
     assert "s1" not in dm.specific or len(dm.specific["s1"]) == 0
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["(?:xx)+", "(?i:xx)+", "(哈)+", "(xx)+", "(?i)awsl", "xx|x", r"(xx){1,3}"],
+)
+def test_validate_trigger_regex_allows_common_llm_patterns(pattern):
+    DataManager.validate_trigger_regex(pattern)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["(a+)+", "(哈+)+", "(.+)+", "(a*)*", r"(\w+)*xx"],
+)
+def test_validate_trigger_regex_rejects_nested_quantifiers(pattern):
+    with pytest.raises(ValueError, match="nested quantifiers"):
+        DataManager.validate_trigger_regex(pattern)
 
 
 async def _bad_regex_seq(dm, regex):
@@ -211,6 +232,7 @@ async def _capacity_seq(dm):
 
 # ==================== replace_layer（服务端归一化并持久化）====================
 
+
 def test_replace_layer_normalizes_and_persists(dm):
     run(_replace_layer_seq(dm, [{"content": "测试", "proficiency": 50}]))
     assert dm.universal["s1"][0]["content"] == "测试"
@@ -228,27 +250,31 @@ def test_replace_layer_rejects_normalized_duplicate(tmp_path):
     revision = dm.layer_revision("s1", "universal")
 
     with pytest.raises(ValueError, match="重复"):
-        run(dm.replace_layer(
-            "s1",
-            "universal",
-            [{"content": " 风格Ａ "}, {"content": "风格a"}],
-            revision,
-        ))
+        run(
+            dm.replace_layer(
+                "s1",
+                "universal",
+                [{"content": " 风格Ａ "}, {"content": "风格a"}],
+                revision,
+            )
+        )
 
 
 def test_replace_specific_combines_overlapping_regexes(tmp_path):
     dm = _new_dm(tmp_path)
     revision = dm.layer_revision("s1", "specific")
 
-    result = run(dm.replace_layer(
-        "s1",
-        "specific",
-        [
-            {"content": "RJW", "trigger_regex": "(?i)rjw"},
-            {"content": "ｒｊｗ", "trigger_regex": "rjw"},
-        ],
-        revision,
-    ))
+    result = run(
+        dm.replace_layer(
+            "s1",
+            "specific",
+            [
+                {"content": "RJW", "trigger_regex": "(?i)rjw"},
+                {"content": "ｒｊｗ", "trigger_regex": "rjw"},
+            ],
+            revision,
+        )
+    )
 
     assert len(result["entries"]) == 1
     combined = result["entries"][0]["trigger_regex"]
@@ -257,6 +283,7 @@ def test_replace_specific_combines_overlapping_regexes(tmp_path):
 
 
 # ==================== _schedule_save race 回归 ====================
+
 
 def test_schedule_save_no_data_loss_under_race(tmp_path):
     """P2 race 回归：连续 mark_dirty 必须最终保存最新值。"""
@@ -270,9 +297,9 @@ def test_schedule_save_no_data_loss_under_race(tmp_path):
 
 async def _race_seq(dm):
     dm.replace_universal("s1", ["a"])  # 触发 A
-    await asyncio.sleep(0.01)          # A 进入 sleep
+    await asyncio.sleep(0.01)  # A 进入 sleep
     dm.replace_universal("s1", ["b"])  # 触发 B，cancel A
-    await dm.force_save()              # 强制同步落盘
+    await dm.force_save()  # 强制同步落盘
 
 
 def test_force_save_persists_all_layers(tmp_path):
@@ -296,6 +323,7 @@ async def _force_save_seq(dm):
 
 
 # ==================== 旧格式迁移 ====================
+
 
 def test_handle_old_format_migrates_to_universal(tmp_path):
     old_data = {"s1": [{"content": "语气活泼"}, {"content": "爱用短句"}]}
@@ -323,6 +351,7 @@ def test_handle_old_format_handles_invalid_json(tmp_path):
 
 
 # ==================== clear_session / export_session / global_stats ====================
+
 
 def test_clear_session_empties_all_layers(dm):
     run(_clear_seq(dm))
@@ -369,6 +398,7 @@ async def _stats_seq(dm):
 
 # ==================== P2 判别：保存调度复用 timer，无 cancel 风暴 ====================
 
+
 def test_schedule_save_reuses_timer(dm):
     """P2 判别：连续 mark_dirty 必须复用同一 timer（V1 会 cancel+重建）。"""
     dm._save_delay = 10  # 拉长延迟避免落盘干扰断言
@@ -413,6 +443,7 @@ async def _storm_seq(dm):
 
 
 # ==================== P2 护栏：写盘期间变更不丢 / 失败保留 dirty ====================
+
 
 def test_mark_dirty_during_save_not_lost(tmp_path):
     """护栏：保存完成后再次变更，新值必须落盘（V1/V2 均应通过）。"""
@@ -509,6 +540,7 @@ async def _force_save_can_skip_retry_for_shutdown(dm, monkeypatch):
 
 # ==================== P1 回归：clear_session 必须延迟落盘 ====================
 
+
 def test_clear_session_persists(tmp_path):
     """P1 回归：清空后必须调度延迟保存（不等 force_save），重启不回退。"""
     dm = _new_dm(tmp_path)
@@ -538,6 +570,7 @@ async def _clear_persists_seq(dm, path):
 
 # ==================== P9 回归：chat_history 容量上限 ====================
 
+
 def test_chat_history_capacity_keeps_recent(dm):
     """P9 回归：超过容量上限时按 FIFO 保留最近 500 条。"""
     run(_history_capacity_seq(dm))
@@ -551,17 +584,34 @@ async def _history_capacity_seq(dm):
         dm.add_message_to_history("s1", {"seq": i})
 
 
-def test_apply_learning_result_is_transactional(dm):
+def test_apply_learning_result_skips_invalid_entries(dm):
     dm.universal["s1"] = [{"content": "old", "proficiency": 20}]
-    dm.contextual["s1"] = [{"scene": "old", "behavior": "old"}]
-    dm.specific["s1"] = [{"content": "old", "trigger_regex": "old"}]
-    before = copy.deepcopy((dm.universal, dm.contextual, dm.specific))
     payload = {
         "universal": ["new"],
         "contextual": [
             {"scene": "valid", "behavior": "valid"},
             {"scene": "missing behavior"},
+            "not-an-object",
         ],
+        "specific": [
+            {"content": "awsl", "trigger_regex": ""},
+            {"content": "xx", "trigger_regex": "xx"},
+        ],
+    }
+
+    run(_apply_learning_result(dm, payload))
+    assert dm.universal["s1"][0]["content"] == "new"
+    assert len(dm.contextual["s1"]) == 1
+    assert dm.contextual["s1"][0]["scene"] == "valid"
+    assert [item["content"] for item in dm.specific["s1"]] == ["xx"]
+
+
+def test_apply_learning_result_rejects_invalid_schema(dm):
+    dm.universal["s1"] = [{"content": "old"}]
+    before = copy.deepcopy((dm.universal, dm.contextual, dm.specific))
+    payload = {
+        "universal": ["new"],
+        "contextual": {"scene": "x"},
         "specific": [],
     }
 
@@ -571,14 +621,42 @@ def test_apply_learning_result_is_transactional(dm):
     assert (dm.universal, dm.contextual, dm.specific) == before
 
 
+def test_apply_learning_result_truncates_universal_to_ten(dm):
+    payload = {
+        "universal": [f"风格{index}" for index in range(11)],
+        "contextual": [],
+        "specific": [],
+    }
+
+    run(_apply_learning_result(dm, payload))
+    assert [item["content"] for item in dm.universal["s1"]] == [
+        f"风格{index}" for index in range(10)
+    ]
+
+
+def test_apply_learning_result_empty_universal_does_not_clear(dm):
+    dm.universal["s1"] = [{"content": "old", "proficiency": 20}]
+    payload = {
+        "universal": [],
+        "contextual": [],
+        "specific": [{"content": "xx", "trigger_regex": "xx"}],
+    }
+
+    run(_apply_learning_result(dm, payload))
+    assert dm.universal["s1"][0]["content"] == "old"
+    assert [item["content"] for item in dm.specific["s1"]] == ["xx"]
+
+
 def test_apply_learning_result_keeps_same_content_with_different_regex(dm):
-    dm.specific["s1"] = [{
-        "content": "梗",
-        "trigger_regex": "old",
-        "trigger_count": 9,
-        "first_seen": 10,
-        "last_seen": 20,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "梗",
+            "trigger_regex": "old",
+            "trigger_count": 9,
+            "first_seen": 10,
+            "last_seen": 20,
+        }
+    ]
     payload = {
         "universal": [],
         "contextual": [],
@@ -598,25 +676,31 @@ def test_apply_learning_result_keeps_same_content_with_different_regex(dm):
 
 
 def test_apply_learning_result_deduplicates_normalized_entries(dm):
-    dm.universal["s1"] = [{
-        "content": "RJW",
-        "proficiency": 30,
-        "confirmed_rounds": 4,
-        "last_updated": 10,
-    }]
-    dm.contextual["s1"] = [{
-        "scene": "问候",
-        "behavior": "回应",
-        "created_at": 10,
-        "_in_buffer": False,
-    }]
-    dm.specific["s1"] = [{
-        "content": "RJW",
-        "trigger_regex": "(?i)rjw",
-        "trigger_count": 9,
-        "first_seen": 10,
-        "last_seen": 20,
-    }]
+    dm.universal["s1"] = [
+        {
+            "content": "RJW",
+            "proficiency": 30,
+            "confirmed_rounds": 4,
+            "last_updated": 10,
+        }
+    ]
+    dm.contextual["s1"] = [
+        {
+            "scene": "问候",
+            "behavior": "回应",
+            "created_at": 10,
+            "_in_buffer": False,
+        }
+    ]
+    dm.specific["s1"] = [
+        {
+            "content": "RJW",
+            "trigger_regex": "(?i)rjw",
+            "trigger_count": 9,
+            "first_seen": 10,
+            "last_seen": 20,
+        }
+    ]
     payload = {
         "universal": ["ＲＪＷ", " rjw "],
         "contextual": [
@@ -716,9 +800,7 @@ def test_deduplicate_session_keeps_regex_whitespace_semantics(tmp_path):
 
     assert result["removed"]["specific"] == 0
     assert result["specific_conflicts"] == 1
-    assert [item["trigger_regex"] for item in dm.specific["s1"]] == [
-        "rjw", " rjw"
-    ]
+    assert [item["trigger_regex"] for item in dm.specific["s1"]] == ["rjw", " rjw"]
 
 
 def test_deduplicate_session_merges_same_specific_term_and_regex(tmp_path):
@@ -734,13 +816,15 @@ def test_deduplicate_session_merges_same_specific_term_and_regex(tmp_path):
 
     assert result["removed"]["specific"] == 1
     assert result["specific_conflicts"] == 0
-    assert dm.specific["s1"] == [{
-        "content": detailed,
-        "trigger_regex": "本可",
-        "trigger_count": 5,
-        "first_seen": 0,
-        "last_seen": 0,
-    }]
+    assert dm.specific["s1"] == [
+        {
+            "content": detailed,
+            "trigger_regex": "本可",
+            "trigger_count": 5,
+            "first_seen": 0,
+            "last_seen": 0,
+        }
+    ]
 
 
 def test_deduplicate_session_combines_overlapping_regexes_for_same_term(tmp_path):
@@ -1050,9 +1134,7 @@ async def _interrupt_multifile_save(dm, monkeypatch):
 
     monkeypatch.setattr(os, "replace", fail_second_layer)
     assert await dm.force_save() is False
-    assert (os.path.exists(dm.universal_file)) != (
-        os.path.exists(dm.contextual_file)
-    )
+    assert (os.path.exists(dm.universal_file)) != (os.path.exists(dm.contextual_file))
     assert os.path.exists(os.path.join(dm.data_dir, ".save-transaction.json"))
 
 
@@ -1060,19 +1142,23 @@ async def _interrupt_multifile_save(dm, monkeypatch):
 def test_contextual_merge_marks_every_changed_layer(tmp_path, target_layer):
     dm = _new_dm(tmp_path)
     text = "scene→behavior"
-    dm.contextual["s1"] = [{
-        "scene": "scene",
-        "behavior": "behavior",
-        "_in_buffer": True,
-    }]
+    dm.contextual["s1"] = [
+        {
+            "scene": "scene",
+            "behavior": "behavior",
+            "_in_buffer": True,
+        }
+    ]
     if target_layer == "universal":
         dm.universal["s1"] = [{"content": text, "proficiency": 10}]
     else:
-        dm.specific["s1"] = [{
-            "content": text,
-            "trigger_regex": "scene",
-            "trigger_count": 1,
-        }]
+        dm.specific["s1"] = [
+            {
+                "content": text,
+                "trigger_regex": "scene",
+                "trigger_count": 1,
+            }
+        ]
 
     run(_merge_and_save(dm))
 
@@ -1115,32 +1201,36 @@ async def _add_with_invalid_capacities(dm):
 
 def test_regex_timeout_bounds_match_time(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.specific["s1"] = [{
-        "content": "pathological",
-        "trigger_regex": "(a|aa)+$",
-        "trigger_count": 1,
-        "first_seen": 1,
-        "last_seen": 1,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "pathological",
+            "trigger_regex": "(a|aa)+$",
+            "trigger_count": 1,
+            "first_seen": 1,
+            "last_seen": 1,
+        }
+    ]
 
     started = time.perf_counter()
     injection = dm.get_injection_data("s1", "a" * 5000 + "!")
     elapsed = time.perf_counter() - started
 
-    assert injection["specific"] == []
+    assert injection["specific"] == ["pathological"]
     assert elapsed < 0.25
     assert dm.specific["s1"][0]["trigger_count"] == 1
 
 
 def test_specific_hit_updates_stats_and_persists(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.specific["s1"] = [{
-        "content": "内部梗",
-        "trigger_regex": "hello",
-        "trigger_count": 4,
-        "first_seen": 1,
-        "last_seen": 1,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "内部梗",
+            "trigger_regex": "hello",
+            "trigger_count": 4,
+            "first_seen": 1,
+            "last_seen": 1,
+        }
+    ]
 
     run(_hit_and_save(dm))
 
@@ -1209,16 +1299,34 @@ async def _specific_injection(dm, message):
 
 def test_oversized_message_skips_specific_matching(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.specific["s1"] = [{
-        "content": "梗",
-        "trigger_regex": "x",
-        "trigger_count": 1,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "梗",
+            "trigger_regex": "x",
+            "trigger_count": 1,
+        }
+    ]
 
     injection = dm.get_injection_data("s1", "x" * 10001)
 
-    assert injection["specific"] == []
+    assert injection["specific"] == ["梗"]
     assert dm.specific["s1"][0]["trigger_count"] == 1
+
+
+def test_empty_message_returns_all_specific_without_counting(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.specific["s1"] = [
+        {
+            "content": "内部梗",
+            "trigger_regex": "hello",
+            "trigger_count": 2,
+        }
+    ]
+
+    injection = dm.get_injection_data("s1", "")
+
+    assert injection["specific"] == ["内部梗"]
+    assert dm.specific["s1"][0]["trigger_count"] == 2
 
 
 def test_layer_revision_rejects_stale_save_without_mutation(tmp_path):
@@ -1257,9 +1365,7 @@ def test_layer_write_failure_keeps_memory_and_revision(tmp_path, monkeypatch):
     monkeypatch.setattr(dm, "_write_json_atomic", fail_write)
 
     with pytest.raises(OSError):
-        run(dm.replace_layer(
-            "s1", "universal", [{"content": "new"}], revision
-        ))
+        run(dm.replace_layer("s1", "universal", [{"content": "new"}], revision))
 
     assert dm.universal == before
     assert dm.layer_revision("s1", "universal") == revision
@@ -1285,15 +1391,17 @@ def test_specific_layer_save_preserves_stats_per_regex(tmp_path):
     ]
     base_revision = dm.layer_revision("s1", "specific")
 
-    result = run(dm.replace_layer(
-        "s1",
-        "specific",
-        [
-            {"content": "梗", "trigger_regex": "old-a"},
-            {"content": "梗", "trigger_regex": "old-b"},
-        ],
-        base_revision,
-    ))
+    result = run(
+        dm.replace_layer(
+            "s1",
+            "specific",
+            [
+                {"content": "梗", "trigger_regex": "old-a"},
+                {"content": "梗", "trigger_regex": "old-b"},
+            ],
+            base_revision,
+        )
+    )
 
     assert [entry["trigger_count"] for entry in result["entries"]] == [3, 7]
     assert [entry["first_seen"] for entry in result["entries"]] == [1, 4]
@@ -1304,18 +1412,20 @@ def test_specific_layer_save_merges_same_term_descriptions(tmp_path):
     dm = _new_dm(tmp_path)
     base_revision = dm.layer_revision("s1", "specific")
 
-    result = run(dm.replace_layer(
-        "s1",
-        "specific",
-        [
-            {"content": "本可（用于做娇）", "trigger_regex": "本可"},
-            {
-                "content": "本可（意为本公主，群内用于做娇）",
-                "trigger_regex": "本可",
-            },
-        ],
-        base_revision,
-    ))
+    result = run(
+        dm.replace_layer(
+            "s1",
+            "specific",
+            [
+                {"content": "本可（用于做娇）", "trigger_regex": "本可"},
+                {
+                    "content": "本可（意为本公主，群内用于做娇）",
+                    "trigger_regex": "本可",
+                },
+            ],
+            base_revision,
+        )
+    )
 
     assert len(result["entries"]) == 1
     assert result["entries"][0]["content"] == "本可（意为本公主，群内用于做娇）"
@@ -1323,24 +1433,30 @@ def test_specific_layer_save_merges_same_term_descriptions(tmp_path):
 
 def test_specific_layer_save_preserves_stats_when_description_changes(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.specific["s1"] = [{
-        "content": "本可（用于做娇）",
-        "trigger_regex": "本可",
-        "trigger_count": 7,
-        "first_seen": 1,
-        "last_seen": 2,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "本可（用于做娇）",
+            "trigger_regex": "本可",
+            "trigger_count": 7,
+            "first_seen": 1,
+            "last_seen": 2,
+        }
+    ]
     base_revision = dm.layer_revision("s1", "specific")
 
-    result = run(dm.replace_layer(
-        "s1",
-        "specific",
-        [{
-            "content": "本可（意为本公主，群内用于做娇）",
-            "trigger_regex": "本可",
-        }],
-        base_revision,
-    ))
+    result = run(
+        dm.replace_layer(
+            "s1",
+            "specific",
+            [
+                {
+                    "content": "本可（意为本公主，群内用于做娇）",
+                    "trigger_regex": "本可",
+                }
+            ],
+            base_revision,
+        )
+    )
 
     assert result["entries"][0]["trigger_count"] == 7
     assert result["entries"][0]["first_seen"] == 1
@@ -1349,21 +1465,25 @@ def test_specific_layer_save_preserves_stats_when_description_changes(tmp_path):
 
 def test_layer_save_returns_normalized_entries_and_new_revision(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.specific["s1"] = [{
-        "content": "梗",
-        "trigger_regex": "old",
-        "trigger_count": 7,
-        "first_seen": 1,
-        "last_seen": 2,
-    }]
+    dm.specific["s1"] = [
+        {
+            "content": "梗",
+            "trigger_regex": "old",
+            "trigger_count": 7,
+            "first_seen": 1,
+            "last_seen": 2,
+        }
+    ]
     base_revision = dm.layer_revision("s1", "specific")
 
-    result = run(dm.replace_layer(
-        "s1",
-        "specific",
-        [{"content": "梗", "trigger_regex": "new"}],
-        base_revision,
-    ))
+    result = run(
+        dm.replace_layer(
+            "s1",
+            "specific",
+            [{"content": "梗", "trigger_regex": "new"}],
+            base_revision,
+        )
+    )
 
     assert result["entries"][0]["trigger_count"] == 7
     assert result["entries"][0]["trigger_regex"] == "new"
@@ -1386,12 +1506,15 @@ def test_snapshot_returns_copies_and_revisions(tmp_path):
 
 async def _persist_and_reload_session_name(tmp_path):
     dm = _new_dm(tmp_path)
-    dm.add_message_to_history("group:123", {
-        "sender": "小明",
-        "content": "大家好",
-        "timestamp": 1,
-        "session_name": "开发讨论群",
-    })
+    dm.add_message_to_history(
+        "group:123",
+        {
+            "sender": "小明",
+            "content": "大家好",
+            "timestamp": 1,
+            "session_name": "开发讨论群",
+        },
+    )
     dm.replace_universal("group:123", ["简洁"])
 
     assert dm.get_snapshot()["session_names"] == {"group:123": "开发讨论群"}
@@ -1399,9 +1522,7 @@ async def _persist_and_reload_session_name(tmp_path):
 
     reloaded = _new_dm(tmp_path)
 
-    assert reloaded.get_snapshot()["session_names"] == {
-        "group:123": "开发讨论群"
-    }
+    assert reloaded.get_snapshot()["session_names"] == {"group:123": "开发讨论群"}
 
 
 def test_session_name_from_history_is_persisted_and_exposed_in_snapshot(tmp_path):
@@ -1411,12 +1532,15 @@ def test_session_name_from_history_is_persisted_and_exposed_in_snapshot(tmp_path
 def test_snapshot_includes_named_session_before_style_analysis(tmp_path):
     async def exercise():
         dm = _new_dm(tmp_path)
-        dm.add_message_to_history("group:456", {
-            "sender": "小明",
-            "content": "大家好",
-            "timestamp": 1,
-            "session_name": "尚未分析的群聊",
-        })
+        dm.add_message_to_history(
+            "group:456",
+            {
+                "sender": "小明",
+                "content": "大家好",
+                "timestamp": 1,
+                "session_name": "尚未分析的群聊",
+            },
+        )
 
         snapshot = dm.get_snapshot()
 
@@ -1443,11 +1567,13 @@ def test_invalid_session_names_temp_does_not_block_startup(tmp_path):
 def test_public_read_interfaces_do_not_expose_internal_layers(tmp_path):
     dm = _new_dm(tmp_path)
     dm.universal["s1"] = [{"content": "style"}]
-    dm.contextual["s1"] = [{
-        "scene": "scene",
-        "behavior": "behavior",
-        "_in_buffer": True,
-    }]
+    dm.contextual["s1"] = [
+        {
+            "scene": "scene",
+            "behavior": "behavior",
+            "_in_buffer": True,
+        }
+    ]
     dm.specific["s1"] = [{"content": "meme", "trigger_regex": "meme"}]
 
     learning = dm.get_learning_context("s1")

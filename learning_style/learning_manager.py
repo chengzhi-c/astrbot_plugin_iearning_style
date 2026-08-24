@@ -81,9 +81,7 @@ class LearningManager:
             or not isinstance(min_history, int)
             or min_history < 1
         ):
-            logger.warning(
-                "配置 min_history_for_analysis 必须是正整数，已回退为 10。"
-            )
+            logger.warning("配置 min_history_for_analysis 必须是正整数，已回退为 10。")
             min_history = 10
         self.min_history = min_history
         self._active_sessions: set[str] = set()
@@ -145,9 +143,7 @@ class LearningManager:
                 if json_text is None:
                     raise ValueError("response does not contain a JSON object")
                 payload = json.loads(json_text)
-                changed = self.data_manager.apply_learning_result(
-                    session_id, payload
-                )
+                changed = self.data_manager.apply_learning_result(session_id, payload)
             except ValueError:
                 logger.warning("学习 provider 返回的 JSON 无效")
                 return LearnResult(False, "invalid_response")
@@ -157,9 +153,7 @@ class LearningManager:
         finally:
             self._active_sessions.discard(session_id)
 
-    def _build_prompt(
-        self, session_id: str, chat_history: list[dict[str, Any]]
-    ) -> str:
+    def _build_prompt(self, session_id: str, chat_history: list[dict[str, Any]]) -> str:
         history_str = json.dumps(
             [
                 {"sender": msg["sender"], "content": msg["content"]}
@@ -172,17 +166,15 @@ class LearningManager:
         learning_context = self.data_manager.get_learning_context(session_id)
         universal = learning_context["universal"]
         universal_list = [t["content"] for t in universal] if universal else []
-        universal_str = "\n".join(
-            [f"- {c}" for c in universal_list]
-        ) if universal_list else "(无)"
+        universal_str = (
+            "\n".join([f"- {c}" for c in universal_list]) if universal_list else "(无)"
+        )
 
         # 情境缓冲区提示
         buffer_items = learning_context["contextual_buffer"]
         contextual_hint = ""
         if buffer_items:
-            lines = [
-                f"- {t['scene']}→{t['behavior']}" for t in buffer_items
-            ]
+            lines = [f"- {t['scene']}→{t['behavior']}" for t in buffer_items]
             contextual_hint = "\n".join(lines)
 
         # 仅非首轮才提供的上下文
@@ -233,6 +225,7 @@ class LearningManager:
 5. specific 是"群里在用什么内部梗/暗号/流行语"——带释义，让外人也能理解。
    content 包含释义（如"xx（用于表达xxx）"），trigger_regex 是能匹配用户相关表达的正则。
    trigger_regex 必须是合法且非空的正则；没有合法正则则不要输出该 specific 条目。
+   插件会忽略非法条目，但不要用空正则占位。
 
 示例输出：
 {{"universal": ["爱用表情包", "喜欢玩烂梗", "语气夸张"], "contextual": [{{"scene": "有人发消息", "behavior": "全员复读"}}, {{"scene": "群友自称萌新", "behavior": "假装也是萌新"}}], "specific": [{{"content": "xx（表达喜欢的意思）", "trigger_regex": "xx|x"}}]}}

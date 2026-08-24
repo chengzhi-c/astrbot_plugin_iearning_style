@@ -44,10 +44,10 @@ async def _group_name_from_event(event: AstrMessageEvent) -> str:
     if isinstance(raw_message, dict):
         raw_group_name = raw_message.get("group_name")
         raw_group = raw_message.get("group") or raw_message.get("group_info")
-        raw_group_name = raw_group_name or (
-            raw_group.get("group_name") if isinstance(raw_group, dict) else None
-        ) or (
-            raw_group.get("name") if isinstance(raw_group, dict) else None
+        raw_group_name = (
+            raw_group_name
+            or (raw_group.get("group_name") if isinstance(raw_group, dict) else None)
+            or (raw_group.get("name") if isinstance(raw_group, dict) else None)
         )
     elif hasattr(raw_message, "__dict__"):
         raw_group_name = getattr(raw_message, "group_name", None)
@@ -148,7 +148,7 @@ async def _group_name_from_event(event: AstrMessageEvent) -> str:
     "astrbot_plugin_iearning_style",
     "qa296",
     "从聊天中学习他人说话方式。",
-    "1.2.0",
+    "1.3.1",
     "https://github.com/chengzhi-c/astrbot_plugin_iearning_style",
 )
 class IearningStylePlugin(Star):
@@ -254,9 +254,7 @@ class IearningStylePlugin(Star):
         if await self.data_manager.force_save():
             yield event.plain_result("已清空当前会话的所有学习风格。")
         else:
-            yield event.plain_result(
-                "风格已在内存中清空，但保存失败；系统会自动重试。"
-            )
+            yield event.plain_result("风格已在内存中清空，但保存失败；系统会自动重试。")
 
     @filter.command("学习总结")
     async def learn_now(self, event: AstrMessageEvent):
@@ -273,9 +271,7 @@ class IearningStylePlugin(Star):
             if not result.ok:
                 if result.code == "insufficient_history":
                     min_history = self.learning_manager.min_history
-                    message = (
-                        f"当前会话聊天记录不足 {min_history} 条，无法进行分析。"
-                    )
+                    message = f"当前会话聊天记录不足 {min_history} 条，无法进行分析。"
                 else:
                     message = _LEARN_FAILURE_MESSAGES.get(
                         result.code, "学习分析失败：未知错误。"
@@ -284,16 +280,11 @@ class IearningStylePlugin(Star):
                 return
 
             if not await self.data_manager.force_save():
-                yield event.plain_result(
-                    "学习结果已更新，但保存失败；系统会自动重试。"
-                )
+                yield event.plain_result("学习结果已更新，但保存失败；系统会自动重试。")
                 return
 
             summary = self.style_injector.get_style_summary(session_id)
-            response = (
-                "学习分析完成！\n"
-                + StyleInjector.format_summary_block(summary)
-            )
+            response = "学习分析完成！\n" + StyleInjector.format_summary_block(summary)
 
             yield event.plain_result(response)
 

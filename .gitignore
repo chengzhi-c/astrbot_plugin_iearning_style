@@ -14,6 +14,10 @@ htmlcov/
 node_modules/
 .playwright-cli/
 test-results/
+.ruff_cache/
+
+# Screenshots / local previews
+preview_screenshots/
 
 # 运行时数据（含本机配置/密钥，禁止推送）
 data/

@@ -189,11 +189,11 @@ def test_analysis_prompt_marks_chat_as_untrusted_json(tmp_path):
     assert "trigger_regex 必须是合法正则。没有则留空" not in prompt
 
 
-def test_valid_empty_universal_clears_existing(tmp_path):
-    run(_valid_empty_universal_clears_existing(tmp_path))
+def test_empty_universal_preserves_existing_and_consumes_history(tmp_path):
+    run(_empty_universal_preserves_existing_and_consumes_history(tmp_path))
 
 
-async def _valid_empty_universal_clears_existing(tmp_path):
+async def _empty_universal_preserves_existing_and_consumes_history(tmp_path):
     provider = FakeProvider(make_response(valid_payload(universal=[])))
     manager, data_manager = make_manager(tmp_path, provider)
     data_manager.universal["s1"] = [{"content": "old", "proficiency": 50}]
@@ -204,38 +204,48 @@ async def _valid_empty_universal_clears_existing(tmp_path):
 
     result = await manager.analyze_and_learn("s1")
 
-    assert result == LearnResult(True, "learned", changed=True)
-    assert data_manager.universal["s1"] == []
+    assert result == LearnResult(True, "learned", changed=False)
+    assert data_manager.universal["s1"][0]["content"] == "old"
     assert data_manager.chat_history["s1"] == []
     await data_manager.force_save()
 
 
-def test_oversized_universal_response_preserves_layers_and_history(tmp_path):
-    run(_oversized_universal_response_preserves_layers_and_history(tmp_path))
+def test_oversized_universal_is_truncated_and_history_consumed(tmp_path):
+    run(_oversized_universal_is_truncated_and_history_consumed(tmp_path))
 
 
-async def _oversized_universal_response_preserves_layers_and_history(tmp_path):
-    provider = FakeProvider(make_response(valid_payload(
-        universal=[f"风格 {index}" for index in range(11)],
-    )))
+async def _oversized_universal_is_truncated_and_history_consumed(tmp_path):
+    provider = FakeProvider(
+        make_response(
+            valid_payload(
+                universal=[f"风格 {index}" for index in range(11)],
+            )
+        )
+    )
     manager, data_manager = make_manager(tmp_path, provider)
     data_manager.replace_universal("s1", ["原有风格"])
     data_manager.add_contextual("s1", "原有场景", "原有行为")
     data_manager.add_or_update_specific("s1", "原有梗", "原有梗")
     for sender, content in (("a", "one"), ("b", "two")):
-        data_manager.add_message_to_history("s1", {
-            "sender": sender,
-            "content": content,
-        })
+        data_manager.add_message_to_history(
+            "s1",
+            {
+                "sender": sender,
+                "content": content,
+            },
+        )
     await data_manager.force_save()
-    before_layers = data_manager.get_session_layers("s1")
-    before_history = data_manager.get_chat_history("s1")
 
     result = await manager.analyze_and_learn("s1")
+    layers = data_manager.get_session_layers("s1")
 
-    assert result == LearnResult(False, "invalid_response")
-    assert data_manager.get_session_layers("s1") == before_layers
-    assert data_manager.get_chat_history("s1") == before_history
+    assert result == LearnResult(True, "learned", changed=True)
+    assert [item["content"] for item in layers["universal"]] == [
+        f"风格 {index}" for index in range(10)
+    ]
+    assert layers["contextual"][0]["scene"] == "原有场景"
+    assert layers["specific"][0]["content"] == "原有梗"
+    assert data_manager.get_chat_history("s1") == []
 
 
 def test_messages_arriving_during_analysis_are_preserved(tmp_path):

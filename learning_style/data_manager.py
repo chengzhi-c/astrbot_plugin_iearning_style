@@ -32,6 +32,9 @@ TOTAL_MATCH_BUDGET_SECONDS = 0.05
 
 _SPECIFIC_TERM_END = regex.compile(r"[（(:：]")
 _SPECIFIC_ALIAS_SEPARATOR = regex.compile(r"\s*[/／、|｜]\s*")
+_INLINE_GROUP_PREFIX = regex.compile(r"\(\?(?::|[=!]|<=|<!|[imsx]+:|P<[^>]+>)")
+_NESTED_QUANTIFIER = regex.compile(r"\([^()]*[+*?{][^()]*\)[+*?{]")
+
 
 LAYERS = (
     "universal",
@@ -95,9 +98,7 @@ class DataManager:
         self.enable_contextual_merge = self._bool_config(
             "enable_contextual_merge", True
         )
-        self.enable_style_injection = self._bool_config(
-            "enable_style_injection", True
-        )
+        self.enable_style_injection = self._bool_config("enable_style_injection", True)
 
         self._save_lock = asyncio.Lock()
         self._dirty: set[str] = set()
@@ -165,12 +166,14 @@ class DataManager:
                     content = trait.get("content") if isinstance(trait, dict) else trait
                     if not isinstance(content, str) or not content.strip():
                         raise ValueError("旧格式表征必须是非空字符串")
-                    normalized.append({
-                        "content": content,
-                        "proficiency": 10,
-                        "confirmed_rounds": 1,
-                        "last_updated": now,
-                    })
+                    normalized.append(
+                        {
+                            "content": content,
+                            "proficiency": 10,
+                            "confirmed_rounds": 1,
+                            "last_updated": now,
+                        }
+                    )
                 migrated_store[sid] = normalized
 
             self._write_json_atomic(self.universal_file, migrated_store)
@@ -226,7 +229,10 @@ class DataManager:
             candidate = _compile_trigger(candidate_pattern)
             existing = [_compile_trigger(pattern) for pattern in existing_patterns]
             for sample in samples:
-                if candidate.search(sample, timeout=PER_PATTERN_TIMEOUT_SECONDS) is None:
+                if (
+                    candidate.search(sample, timeout=PER_PATTERN_TIMEOUT_SECONDS)
+                    is None
+                ):
                     continue
                 if any(
                     pattern.search(sample, timeout=PER_PATTERN_TIMEOUT_SECONDS)
@@ -303,11 +309,13 @@ class DataManager:
             if matched is None:
                 if has_conflict:
                     conflicts += 1
-                groups.append({
-                    "entry": entry,
-                    "aliases": aliases,
-                    "patterns": [pattern],
-                })
+                groups.append(
+                    {
+                        "entry": entry,
+                        "aliases": aliases,
+                        "patterns": [pattern],
+                    }
+                )
                 deduplicated.append(entry)
                 continue
 
@@ -400,15 +408,11 @@ class DataManager:
                 return None
             return {
                 "content": content,
-                "proficiency": self._nonnegative_number(
-                    item.get("proficiency"), 10
-                ),
+                "proficiency": self._nonnegative_number(item.get("proficiency"), 10),
                 "confirmed_rounds": self._nonnegative_number(
                     item.get("confirmed_rounds"), 1
                 ),
-                "last_updated": self._nonnegative_number(
-                    item.get("last_updated"), 0
-                ),
+                "last_updated": self._nonnegative_number(item.get("last_updated"), 0),
             }
         if layer == "contextual":
             scene = item.get("scene")
@@ -430,6 +434,8 @@ class DataManager:
             trigger_regex = item.get("trigger_regex")
             if not isinstance(content, str) or not content.strip():
                 return None
+            if not isinstance(trigger_regex, str):
+                return None
             try:
                 self.validate_trigger_regex(trigger_regex)
             except ValueError:
@@ -437,9 +443,7 @@ class DataManager:
             return {
                 "content": content,
                 "trigger_regex": trigger_regex,
-                "trigger_count": self._nonnegative_number(
-                    item.get("trigger_count"), 1
-                ),
+                "trigger_count": self._nonnegative_number(item.get("trigger_count"), 1),
                 "first_seen": self._nonnegative_number(item.get("first_seen"), 0),
                 "last_seen": self._nonnegative_number(item.get("last_seen"), 0),
             }
@@ -461,9 +465,7 @@ class DataManager:
     def _session_name(value: Any) -> str:
         return value.strip() if isinstance(value, str) else ""
 
-    def _normalize_session_names(
-        self, raw: Any
-    ) -> tuple[dict[str, str], bool]:
+    def _normalize_session_names(self, raw: Any) -> tuple[dict[str, str], bool]:
         if not isinstance(raw, dict):
             raise ValueError("root must be an object")
         cleaned: dict[str, str] = {}
@@ -481,9 +483,7 @@ class DataManager:
                 changed = True
         return cleaned, changed
 
-    def _normalize_store(
-        self, layer: str, raw: Any
-    ) -> tuple[dict[str, Any], bool]:
+    def _normalize_store(self, layer: str, raw: Any) -> tuple[dict[str, Any], bool]:
         if layer == "session_names":
             return self._normalize_session_names(raw)
         if not isinstance(raw, dict):
@@ -500,9 +500,7 @@ class DataManager:
                 normalized = self._normalize_entry(layer, item)
                 if normalized is None:
                     changed = True
-                    logger.warning(
-                        f"加载 {layer} 时跳过无效条目: index={index}"
-                    )
+                    logger.warning(f"加载 {layer} 时跳过无效条目: index={index}")
                     continue
                 normalized_entries.append(normalized)
                 if normalized != item:
@@ -644,8 +642,7 @@ class DataManager:
                 if os.path.exists(temp) and self._file_hash(temp) == expected_hash:
                     os.replace(temp, target)
                 elif not (
-                    os.path.exists(target)
-                    and self._file_hash(target) == expected_hash
+                    os.path.exists(target) and self._file_hash(target) == expected_hash
                 ):
                     raise ValueError("transaction data is missing or corrupted")
             os.remove(self.transaction_file)
@@ -697,9 +694,7 @@ class DataManager:
         old_traits, _, _ = self._deduplicate_entries(
             "universal", self.universal.get(session_id, [])
         )
-        old_map = {
-            self._dedup_key(trait["content"]): trait for trait in old_traits
-        }
+        old_map = {self._dedup_key(trait["content"]): trait for trait in old_traits}
 
         new_traits = []
         seen = set()
@@ -711,19 +706,23 @@ class DataManager:
             seen.add(key)
             if key in old_map:
                 old = old_map[key]
-                new_traits.append({
-                    "content": content,
-                    "proficiency": min(100, old.get("proficiency", 0) + 5),
-                    "confirmed_rounds": old.get("confirmed_rounds", 0) + 1,
-                    "last_updated": current_time,
-                })
+                new_traits.append(
+                    {
+                        "content": content,
+                        "proficiency": min(100, old.get("proficiency", 0) + 5),
+                        "confirmed_rounds": old.get("confirmed_rounds", 0) + 1,
+                        "last_updated": current_time,
+                    }
+                )
             else:
-                new_traits.append({
-                    "content": content,
-                    "proficiency": 10,
-                    "confirmed_rounds": 1,
-                    "last_updated": current_time,
-                })
+                new_traits.append(
+                    {
+                        "content": content,
+                        "proficiency": 10,
+                        "confirmed_rounds": 1,
+                        "last_updated": current_time,
+                    }
+                )
 
         return new_traits
 
@@ -740,11 +739,9 @@ class DataManager:
 
     def get_contextual_buffer(self, session_id: str) -> list[dict[str, Any]]:
         """仅返回缓冲位中的情境表征（供维护合并用）。"""
-        return copy.deepcopy([
-            t
-            for t in self.contextual.get(session_id, [])
-            if t.get("_in_buffer")
-        ])
+        return copy.deepcopy(
+            [t for t in self.contextual.get(session_id, []) if t.get("_in_buffer")]
+        )
 
     def get_learning_context(self, session_id: str) -> dict[str, Any]:
         return {
@@ -763,12 +760,14 @@ class DataManager:
         if session_id not in self.contextual:
             self.contextual[session_id] = []
 
-        self.contextual[session_id].append({
-            "scene": scene,
-            "behavior": behavior,
-            "created_at": current_time,
-            "_in_buffer": True,
-        })
+        self.contextual[session_id].append(
+            {
+                "scene": scene,
+                "behavior": behavior,
+                "created_at": current_time,
+                "_in_buffer": True,
+            }
+        )
 
         # FIFO 容量检查
         max_capacity = self.max_contextual_per_session
@@ -791,7 +790,7 @@ class DataManager:
             return
         buffer_count = max(1, int(len(traits) * CONTEXTUAL_BUFFER_RATIO))
         for i, t in enumerate(traits):
-            t["_in_buffer"] = (i >= len(traits) - buffer_count)
+            t["_in_buffer"] = i >= len(traits) - buffer_count
 
     def merge_contextual_buffer(self, session_id: str, threshold: float = 0.85):
         """
@@ -839,9 +838,7 @@ class DataManager:
             # 尝试合并到特定
             if specific:
                 for s in specific:
-                    score = difflib.SequenceMatcher(
-                        None, text, s["content"]
-                    ).ratio()
+                    score = difflib.SequenceMatcher(None, text, s["content"]).ratio()
                     if score > threshold:
                         s["trigger_count"] = s.get("trigger_count", 0) + 1
                         merged = True
@@ -883,9 +880,7 @@ class DataManager:
             "specific": self.get_specific_for_session(session_id),
         }
 
-    def add_or_update_specific(
-        self, session_id: str, content: str, trigger_regex: str
-    ):
+    def add_or_update_specific(self, session_id: str, content: str, trigger_regex: str):
         content = content.strip()
         try:
             self.validate_trigger_regex(trigger_regex)
@@ -912,13 +907,15 @@ class DataManager:
                 self._mark_dirty("specific")
                 return
 
-        self.specific[session_id].append({
-            "content": content,
-            "trigger_regex": trigger_regex,
-            "trigger_count": 1,
-            "first_seen": current_time,
-            "last_seen": current_time,
-        })
+        self.specific[session_id].append(
+            {
+                "content": content,
+                "trigger_regex": trigger_regex,
+                "trigger_count": 1,
+                "first_seen": current_time,
+                "last_seen": current_time,
+            }
+        )
         self.specific[session_id], _, _ = self._deduplicate_specific_entries(
             self.specific[session_id]
         )
@@ -935,7 +932,10 @@ class DataManager:
 
     def check_specific_capacity(self, session_id: str):
         max_specific = self.max_specific_per_session
-        if session_id in self.specific and len(self.specific[session_id]) > max_specific:
+        if (
+            session_id in self.specific
+            and len(self.specific[session_id]) > max_specific
+        ):
             excess = len(self.specific[session_id]) - max_specific
             self.remove_lowest_specific(session_id, excess)
 
@@ -947,7 +947,8 @@ class DataManager:
             raise ValueError(
                 f"trigger_regex exceeds {MAX_TRIGGER_PATTERN_LENGTH} characters"
             )
-        if regex.search(r"\([^()]*[+*?][^()]*\)[+*?]", trigger_regex):
+        stripped = _INLINE_GROUP_PREFIX.sub("(", trigger_regex)
+        if _NESTED_QUANTIFIER.search(stripped):
             raise ValueError("trigger_regex contains nested quantifiers")
         try:
             _compile_trigger(trigger_regex)
@@ -963,22 +964,29 @@ class DataManager:
         contextual, _, _ = self._deduplicate_entries(
             "contextual", self.contextual.get(session_id, [])
         )
-        hit_contents = []
-        hit_aliases = set()
         specific = self.specific.get(session_id, [])
-        if (
-            not specific
-            or not user_message
-            or len(user_message) > MAX_MATCH_MESSAGE_LENGTH
-        ):
+        contents = []
+        seen_aliases: set[str] = set()
+        for trait in specific:
+            aliases = set(self._specific_aliases(trait["content"]))
+            is_new_term = seen_aliases.isdisjoint(aliases)
+            seen_aliases.update(aliases)
+            if is_new_term:
+                contents.append(trait["content"])
+
+        should_match = bool(
+            specific and user_message and len(user_message) <= MAX_MATCH_MESSAGE_LENGTH
+        )
+        if not should_match:
             return {
                 "universal": universal,
                 "contextual": contextual,
-                "specific": hit_contents,
+                "specific": contents,
             }
 
         deadline = time.perf_counter() + TOTAL_MATCH_BUDGET_SECONDS
         now = time.time()
+        hit_any = False
         for trait in specific:
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
@@ -993,37 +1001,29 @@ class DataManager:
                     timeout=min(PER_PATTERN_TIMEOUT_SECONDS, remaining),
                 )
             except TimeoutError:
-                pattern_id = hashlib.sha256(
-                    pattern.encode("utf-8")
-                ).hexdigest()[:12]
+                pattern_id = hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:12]
                 logger.warning(f"特定表征正则匹配超时: pattern={pattern_id}")
                 continue
             except regex.error:
-                pattern_id = hashlib.sha256(
-                    pattern.encode("utf-8")
-                ).hexdigest()[:12]
+                pattern_id = hashlib.sha256(pattern.encode("utf-8")).hexdigest()[:12]
                 logger.warning(f"特定表征正则运行失败: pattern={pattern_id}")
                 continue
             if matched is None:
                 continue
-            aliases = set(self._specific_aliases(trait["content"]))
-            is_new_term = hit_aliases.isdisjoint(aliases)
-            hit_aliases.update(aliases)
-            if is_new_term:
-                hit_contents.append(trait["content"])
+            hit_any = True
             trait["trigger_count"] = trait.get("trigger_count", 0) + 1
             trait["last_seen"] = now
 
-        if hit_contents:
+        if hit_any:
             self._mark_dirty("specific")
         return {
             "universal": universal,
             "contextual": contextual,
-            "specific": hit_contents,
+            "specific": contents,
         }
 
     def apply_learning_result(self, session_id: str, payload: Any) -> bool:
-        """Validate and apply one LLM result without partial mutations."""
+        """Apply one LLM result. Schema errors raise; invalid items are skipped."""
         if not isinstance(payload, dict):
             raise ValueError("learning result must be an object")
 
@@ -1031,35 +1031,68 @@ class DataManager:
             if not isinstance(payload.get(field), list):
                 raise ValueError(f"{field} must be a list")
 
-        universal_contents = self._validate_universal_contents(payload["universal"])
+        skipped = {"universal": 0, "contextual": 0, "specific": 0}
+        universal_contents = []
+        for content in payload["universal"]:
+            if not isinstance(content, str) or not content.strip():
+                skipped["universal"] += 1
+                continue
+            universal_contents.append(content.strip())
+        if len(universal_contents) > MAX_UNIVERSAL_PER_SESSION:
+            logger.warning(
+                "学习结果 universal 超过 %s 条，已截断。",
+                MAX_UNIVERSAL_PER_SESSION,
+            )
+            universal_contents = universal_contents[:MAX_UNIVERSAL_PER_SESSION]
 
         contextual_items = []
         for item in payload["contextual"]:
             if not isinstance(item, dict):
-                raise ValueError("contextual entries must be objects")
+                skipped["contextual"] += 1
+                continue
             scene = item.get("scene")
             behavior = item.get("behavior")
             if not isinstance(scene, str) or not scene.strip():
-                raise ValueError("contextual scene must be a non-empty string")
+                skipped["contextual"] += 1
+                continue
             if not isinstance(behavior, str) or not behavior.strip():
-                raise ValueError("contextual behavior must be a non-empty string")
+                skipped["contextual"] += 1
+                continue
             contextual_items.append((scene.strip(), behavior.strip()))
 
         specific_items = []
         for item in payload["specific"]:
             if not isinstance(item, dict):
-                raise ValueError("specific entries must be objects")
+                skipped["specific"] += 1
+                continue
             content = item.get("content")
             trigger_regex = item.get("trigger_regex")
             if not isinstance(content, str) or not content.strip():
-                raise ValueError("specific content must be a non-empty string")
-            self.validate_trigger_regex(trigger_regex)
+                skipped["specific"] += 1
+                continue
+            if not isinstance(trigger_regex, str):
+                skipped["specific"] += 1
+                continue
+            try:
+                self.validate_trigger_regex(trigger_regex)
+            except ValueError:
+                skipped["specific"] += 1
+                continue
             specific_items.append((content.strip(), trigger_regex))
 
+        if any(skipped.values()):
+            logger.warning(
+                "学习结果跳过非法条目: universal=%s contextual=%s specific=%s",
+                skipped["universal"],
+                skipped["contextual"],
+                skipped["specific"],
+            )
+
         now = time.time()
-        new_universal = self._build_universal_traits(
-            session_id, universal_contents
-        )
+        if universal_contents:
+            new_universal = self._build_universal_traits(session_id, universal_contents)
+        else:
+            new_universal = copy.deepcopy(self.universal.get(session_id, []))
 
         new_contextual = copy.deepcopy(self.contextual.get(session_id, []))
         new_contextual.extend(
@@ -1071,9 +1104,7 @@ class DataManager:
             }
             for scene, behavior in contextual_items
         )
-        new_contextual, _, _ = self._deduplicate_entries(
-            "contextual", new_contextual
-        )
+        new_contextual, _, _ = self._deduplicate_entries("contextual", new_contextual)
         max_contextual = self.max_contextual_per_session
         if len(new_contextual) > max_contextual:
             new_contextual = new_contextual[-max_contextual:]
@@ -1093,17 +1124,17 @@ class DataManager:
             )
             if existing is not None:
                 continue
-            new_specific.append({
-                "content": content,
-                "trigger_regex": trigger_regex,
-                "trigger_count": 1,
-                "first_seen": now,
-                "last_seen": now,
-            })
+            new_specific.append(
+                {
+                    "content": content,
+                    "trigger_regex": trigger_regex,
+                    "trigger_count": 1,
+                    "first_seen": now,
+                    "last_seen": now,
+                }
+            )
 
-        new_specific, _, _ = self._deduplicate_entries(
-            "specific", new_specific
-        )
+        new_specific, _, _ = self._deduplicate_entries("specific", new_specific)
 
         max_specific = self.max_specific_per_session
         if len(new_specific) > max_specific:
@@ -1123,9 +1154,7 @@ class DataManager:
             "specific": new_specific,
         }
         changed_layers = [
-            layer
-            for layer in new_values
-            if new_values[layer] != old_values[layer]
+            layer for layer in new_values if new_values[layer] != old_values[layer]
         ]
         if not changed_layers:
             return False
@@ -1152,9 +1181,7 @@ class DataManager:
 
     def _next_retry_delay(self) -> float:
         delay = self._retry_delays[self._retry_index]
-        self._retry_index = min(
-            self._retry_index + 1, len(self._retry_delays) - 1
-        )
+        self._retry_index = min(self._retry_index + 1, len(self._retry_delays) - 1)
         return delay
 
     async def _delayed_save(self, delay: float) -> None:
@@ -1204,12 +1231,14 @@ class DataManager:
                 temp_path = os.path.join(self.data_dir, temp_name)
                 data = stores[layer] if stores is not None else getattr(self, layer)
                 self._write_json_file(temp_path, data)
-                entries.append({
-                    "layer": layer,
-                    "temp": temp_name,
-                    "target": os.path.basename(target),
-                    "sha256": self._file_hash(temp_path),
-                })
+                entries.append(
+                    {
+                        "layer": layer,
+                        "temp": temp_name,
+                        "target": os.path.basename(target),
+                        "sha256": self._file_hash(temp_path),
+                    }
+                )
             self._write_json_atomic(
                 self.transaction_file, {"version": 1, "entries": entries}
             )
@@ -1414,9 +1443,7 @@ class DataManager:
             ]
             if len(layers) == 1:
                 layer = layers[0]
-                self._write_json_atomic(
-                    self._layer_files[layer], updated_stores[layer]
-                )
+                self._write_json_atomic(self._layer_files[layer], updated_stores[layer])
             elif layers and not self._save_transaction(layers, updated_stores):
                 if (
                     not os.path.exists(self.transaction_file)
@@ -1448,9 +1475,7 @@ class DataManager:
         }
 
     @staticmethod
-    def _required_field(
-        item: Any, key: str, index: int, *, strip: bool = True
-    ) -> str:
+    def _required_field(item: Any, key: str, index: int, *, strip: bool = True) -> str:
         if not isinstance(item, dict):
             raise ValueError(f"第 {index + 1} 条格式错误，应为对象")
         value = item.get(key)
@@ -1476,9 +1501,7 @@ class DataManager:
                     f"条目数 {len(entries)} 超过通用表征容量上限 "
                     f"{MAX_UNIVERSAL_PER_SESSION}"
                 )
-            old = {
-                self._dedup_key(item["content"]): item for item in current
-            }
+            old = {self._dedup_key(item["content"]): item for item in current}
             for index, item in enumerate(entries):
                 content = self._required_field(item, "content", index)
                 key = self._dedup_key(content)
@@ -1486,12 +1509,14 @@ class DataManager:
                     raise ValueError(f"第 {index + 1} 条与前面的条目重复")
                 seen.add(key)
                 previous = old.get(key, {})
-                normalized.append({
-                    "content": content,
-                    "proficiency": previous.get("proficiency", 10),
-                    "confirmed_rounds": previous.get("confirmed_rounds", 1),
-                    "last_updated": previous.get("last_updated", now),
-                })
+                normalized.append(
+                    {
+                        "content": content,
+                        "proficiency": previous.get("proficiency", 10),
+                        "confirmed_rounds": previous.get("confirmed_rounds", 1),
+                        "last_updated": previous.get("last_updated", now),
+                    }
+                )
             return normalized
 
         if layer == "contextual":
@@ -1515,11 +1540,13 @@ class DataManager:
                     raise ValueError(f"第 {index + 1} 条与前面的条目重复")
                 seen.add(key)
                 previous = old.get(key, {})
-                normalized.append({
-                    "scene": scene,
-                    "behavior": behavior,
-                    "created_at": previous.get("created_at", now),
-                })
+                normalized.append(
+                    {
+                        "scene": scene,
+                        "behavior": behavior,
+                        "created_at": previous.get("created_at", now),
+                    }
+                )
             self._set_buffer_markers(normalized)
             return normalized
 
@@ -1562,13 +1589,15 @@ class DataManager:
                         if not aliases.isdisjoint(old_aliases)
                     ]
                 previous = candidates[0] if len(candidates) == 1 else {}
-            normalized.append({
-                "content": content,
-                "trigger_regex": trigger_regex,
-                "trigger_count": previous.get("trigger_count", 1),
-                "first_seen": previous.get("first_seen", now),
-                "last_seen": previous.get("last_seen", now),
-            })
+            normalized.append(
+                {
+                    "content": content,
+                    "trigger_regex": trigger_regex,
+                    "trigger_count": previous.get("trigger_count", 1),
+                    "first_seen": previous.get("first_seen", now),
+                    "last_seen": previous.get("last_seen", now),
+                }
+            )
         deduplicated, _, _ = self._deduplicate_specific_entries(normalized)
         return deduplicated
 
@@ -1587,9 +1616,7 @@ class DataManager:
             if base_revision != self.layer_revision(session_id, layer):
                 raise RevisionConflictError("revision_conflict")
 
-            normalized = self._normalize_layer_replacement(
-                session_id, layer, entries
-            )
+            normalized = self._normalize_layer_replacement(session_id, layer, entries)
             updated_store = copy.deepcopy(getattr(self, layer))
             updated_store[session_id] = normalized
             self._write_json_atomic(self._layer_files[layer], updated_store)
