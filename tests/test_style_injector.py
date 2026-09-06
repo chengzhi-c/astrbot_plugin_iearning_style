@@ -130,16 +130,15 @@ def test_injection_includes_specific_when_user_message_empty(tmp_path):
     assert data_manager.specific["s1"][0]["trigger_count"] == 2
 
 
-def test_should_inject_respects_flag_and_empty_data(tmp_path):
+def test_inject_respects_flag_and_empty_data(tmp_path):
     data_manager = DataManager(str(tmp_path), {"enable_style_injection": False})
     injector = StyleInjector(data_manager, {})
-    assert injector.should_inject_style("s1") is False
     assert injector.inject_style_to_prompt("s1", "base") == "base"
 
     data_manager.enable_style_injection = True
-    assert injector.should_inject_style("s1") is False
+    assert injector.inject_style_to_prompt("s1", "base") == "base"
     data_manager.universal["s1"] = [{"content": "style"}]
-    assert injector.should_inject_style("s1") is True
+    assert "style" in injector.inject_style_to_prompt("s1", "base")
 
 
 def test_injection_without_original_prompt_returns_only_safe_block(tmp_path):
@@ -157,6 +156,7 @@ def test_injection_without_original_prompt_returns_only_safe_block(tmp_path):
 def test_injection_error_falls_back_to_original_prompt():
     data_manager = SimpleNamespace(
         enable_style_injection=True,
+        has_styles_for_session=lambda *_args: True,
         get_injection_data=lambda *_args: (_ for _ in ()).throw(RuntimeError("bad")),
     )
     injector = StyleInjector(data_manager, {})

@@ -27,15 +27,12 @@ class StyleInjector:
     def __init__(self, data_manager, config: dict[str, Any]):
         self.data_manager = data_manager
 
-    def should_inject_style(self, session_id: str) -> bool:
-        if not self.data_manager.enable_style_injection:
-            return False
-        return bool(self.data_manager.has_styles_for_session(session_id))
-
     def inject_style_to_prompt(
         self, session_id: str, original_system_prompt: str, user_message: str = ""
     ) -> str:
         if not self.data_manager.enable_style_injection:
+            return original_system_prompt
+        if not self.data_manager.has_styles_for_session(session_id):
             return original_system_prompt
 
         try:
