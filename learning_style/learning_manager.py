@@ -6,6 +6,7 @@ from typing import Any, Literal
 from astrbot.api import logger
 from astrbot.api.star import Star
 
+from ._config import positive_int
 from .data_manager import DataManager
 
 LearnCode = Literal[
@@ -80,15 +81,7 @@ class LearningManager:
         self.context = star_instance.context
         self.data_manager = data_manager
         self.config = config
-        min_history = config.get("min_history_for_analysis", 10)
-        if (
-            isinstance(min_history, bool)
-            or not isinstance(min_history, int)
-            or min_history < 1
-        ):
-            logger.warning("配置 min_history_for_analysis 必须是正整数，已回退为 10。")
-            min_history = 10
-        self.min_history = min_history
+        self.min_history = positive_int(config, "min_history_for_analysis", 10)
         self._active_sessions: set[str] = set()
 
     def _get_provider(self):

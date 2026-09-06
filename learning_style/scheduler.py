@@ -2,6 +2,7 @@ import asyncio
 
 from astrbot.api import logger
 
+from ._config import positive_int
 from .data_manager import DataManager
 from .learning_manager import LearningManager
 
@@ -22,22 +23,15 @@ class Scheduler:
         self.data_manager = data_manager
         self.learning_manager = learning_manager
         self.config = config
-        self.analysis_interval = self._positive_interval(
-            "analysis_interval_seconds", 3600
+        self.analysis_interval = positive_int(
+            config, "analysis_interval_seconds", 3600
         )
-        self.maintenance_interval = self._positive_interval(
-            "maintenance_interval_seconds", 86400
+        self.maintenance_interval = positive_int(
+            config, "maintenance_interval_seconds", 86400
         )
         self.analysis_task: asyncio.Task | None = None
         self.maintenance_task: asyncio.Task | None = None
         self.is_running = False
-
-    def _positive_interval(self, key: str, default: int) -> int:
-        value = self.config.get(key, default)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            logger.warning(f"配置 {key} 必须是正整数，已回退为 {default}。")
-            return default
-        return value
 
     def start(self):
         if not self.is_running:

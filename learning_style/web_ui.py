@@ -28,6 +28,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ._config import bool_value
 from .data_manager import DataManager, RevisionConflictError
 
 PLUGIN_NAME = "astrbot_plugin_iearning_style"
@@ -63,11 +64,7 @@ class StylePage:
         self.data_manager = data_manager
         self.config = config
         self.learning_manager = learning_manager
-        enabled = config.get("webui_enabled", True)
-        if not isinstance(enabled, bool):
-            logger.warning("配置 webui_enabled 必须是布尔值，已回退为 True。")
-            enabled = True
-        self.webui_enabled = enabled
+        self.webui_enabled = bool_value(config, "webui_enabled", True)
 
     def register(self) -> None:
         if not self.webui_enabled:

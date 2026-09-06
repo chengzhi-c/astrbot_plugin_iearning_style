@@ -13,6 +13,8 @@ from typing import Any
 import regex
 from astrbot.api import logger
 
+from ._config import bool_value, positive_int
+
 # 情境表征缓冲比例（硬编码）
 CONTEXTUAL_BUFFER_RATIO = 0.2  # 20% 为缓冲位
 
@@ -89,16 +91,18 @@ class DataManager:
         self.session_names: dict[str, str] = {}
 
         self.config = config
-        self.max_contextual_per_session = self._positive_int_config(
-            "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
+        self.max_contextual_per_session = positive_int(
+            config, "max_contextual_per_session", MAX_CONTEXTUAL_PER_SESSION
         )
-        self.max_specific_per_session = self._positive_int_config(
-            "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
+        self.max_specific_per_session = positive_int(
+            config, "max_specific_per_session", MAX_SPECIFIC_PER_SESSION
         )
-        self.enable_contextual_merge = self._bool_config(
-            "enable_contextual_merge", True
+        self.enable_contextual_merge = bool_value(
+            config, "enable_contextual_merge", True
         )
-        self.enable_style_injection = self._bool_config("enable_style_injection", True)
+        self.enable_style_injection = bool_value(
+            config, "enable_style_injection", True
+        )
 
         self._save_lock = asyncio.Lock()
         self._dirty: set[str] = set()
@@ -123,20 +127,6 @@ class DataManager:
         self.load_chat_history()
         self.load_session_names()
         self._handle_old_format()
-
-    def _positive_int_config(self, key: str, default: int) -> int:
-        value = self.config.get(key, default)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            logger.warning(f"配置 {key} 必须是正整数，已回退为 {default}。")
-            return default
-        return value
-
-    def _bool_config(self, key: str, default: bool) -> bool:
-        value = self.config.get(key, default)
-        if not isinstance(value, bool):
-            logger.warning(f"配置 {key} 必须是布尔值，已回退为 {default}。")
-            return default
-        return value
 
     def _ensure_data_dir(self):
         if not os.path.exists(self.data_dir):
