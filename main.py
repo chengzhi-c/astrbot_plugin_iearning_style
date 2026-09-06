@@ -35,6 +35,49 @@ def _usable_group_name(value: object, group_id: object = None) -> str:
     return name
 
 
+def _pick_field(source: object, *keys: str):
+    """dict/object 双形态取值：依次返回首个非空值，否则 None。无 I/O。"""
+    if source is None:
+        return None
+    if not isinstance(source, dict) and not hasattr(source, "__dict__"):
+        return None
+    for key in keys:
+        value = (
+            source.get(key) if isinstance(source, dict) else getattr(source, key, None)
+        )
+        if value:
+            return value
+    return None
+
+
+def _group_name_from_message(
+    message_obj: object, group_id: object, extra_group_name: object = None
+) -> str:
+    """纯属性读取，无 I/O：按既有优先级探测各形态的群名字段。"""
+    raw_message = getattr(message_obj, "raw_message", None)
+    raw_group = _pick_field(raw_message, "group") or _pick_field(
+        raw_message, "group_info"
+    )
+    raw_group_name = _pick_field(raw_message, "group_name") or _pick_field(
+        raw_group, "group_name", "name"
+    )
+
+    sender = getattr(message_obj, "sender", None)
+    group = getattr(message_obj, "group", None)
+    for value in (
+        raw_group_name,
+        getattr(message_obj, "group_name", None),
+        getattr(sender, "group_name", None),
+        getattr(group, "group_name", None),
+        getattr(group, "name", None),
+        extra_group_name,
+    ):
+        name = _usable_group_name(value, group_id)
+        if name:
+            return name
+    return ""
+
+
 async def _group_name_from_event(event: AstrMessageEvent, _cooldown=None) -> str:
     """从 AstrBot 消息事件提取平台已提供的群名。
 
@@ -48,41 +91,16 @@ async def _group_name_from_event(event: AstrMessageEvent, _cooldown=None) -> str
     if not group_id:
         group_id = getattr(message_obj, "group_id", None)
 
-    raw_message = getattr(message_obj, "raw_message", None)
-    if isinstance(raw_message, dict):
-        raw_group_name = raw_message.get("group_name")
-        raw_group = raw_message.get("group") or raw_message.get("group_info")
-        raw_group_name = (
-            raw_group_name
-            or (raw_group.get("group_name") if isinstance(raw_group, dict) else None)
-            or (raw_group.get("name") if isinstance(raw_group, dict) else None)
-        )
-    elif hasattr(raw_message, "__dict__"):
-        raw_group_name = getattr(raw_message, "group_name", None)
-        raw_group = getattr(raw_message, "group", None) or getattr(
-            raw_message, "group_info", None
-        )
-        raw_group_name = raw_group_name or getattr(raw_group, "group_name", None)
-        raw_group_name = raw_group_name or getattr(raw_group, "name", None)
-    else:
-        raw_group_name = None
-
-    sender = getattr(message_obj, "sender", None)
-    group = getattr(message_obj, "group", None)
     get_extra = getattr(event, "get_extra", None)
     extra_group_name = get_extra("group_name") if callable(get_extra) else None
-    for value in (
-        raw_group_name,
-        getattr(message_obj, "group_name", None),
-        getattr(sender, "group_name", None),
-        getattr(group, "group_name", None),
-        getattr(group, "name", None),
-        extra_group_name,
-    ):
-        name = _usable_group_name(value, group_id)
-        if name:
-            return name
+    name = _group_name_from_message(message_obj, group_id, extra_group_name)
+    if name:
+        return name
+    return await _fetch_group_name_via_api(event, group_id, _cooldown)
 
+
+async def _fetch_group_name_via_api(event: object, group_id: object, _cooldown=None) -> str:
+    """三层网络回退：get_group → call_action → QQ 官方接口，per-group 节流。"""
     get_group = getattr(event, "get_group", None)
     if not group_id:
         return ""
