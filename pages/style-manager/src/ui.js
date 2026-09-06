@@ -1,7 +1,7 @@
 // ui.js — 设计系统 UI 组件层：Toast / 确认弹窗 / 骨架屏 / 空状态。
 // 所有组件只依赖 DOM 工具和图标，不读取业务状态。
 
-import { $, el } from "./util.js";
+import { $, el, esc } from "./util.js";
 import { icon, emptyArt } from "./icons.js";
 
 /* ============ Toast（可堆叠、类型化、自动消失） ============ */
@@ -122,8 +122,8 @@ export function skeleton(rows = 4) {
 export function emptyState(opts = {}) {
 	const { title = "暂无数据", desc = "", art = "empty", action = "" } = opts;
 	return `<div class="empty-state">${emptyArt(art)}
-    <div class="es-title">${title}</div>
-    ${desc ? `<div class="es-desc">${desc}</div>` : ""}
+    <div class="es-title">${esc(title)}</div>
+    ${desc ? `<div class="es-desc">${esc(desc)}</div>` : ""}
     ${action || ""}
   </div>`;
 }

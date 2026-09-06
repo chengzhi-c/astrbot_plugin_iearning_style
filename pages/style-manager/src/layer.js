@@ -10,6 +10,20 @@ import { toast, emptyState } from './ui.js';
 const HINTS = Object.fromEntries(LAYERS.map((l) => [l.key, l.hint]));
 const dedupKey = (value) => value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
 
+/** 容量徽章：文本与告警色由一处计算（后端 stats.caps 优先，DEFAULT_CAPS 兜底）。 */
+export function capMeta(key, list) {
+  const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
+  const showCap = key === 'universal';
+  const ratio = showCap && cap > 0 ? list.length / cap : 0;
+  const cls = !showCap ? '' : ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '';
+  return {
+    cap,
+    text: showCap ? `${list.length} / ${cap} 条` : `${list.length} 条`,
+    cls,
+    title: showCap ? '容量上限 ' + cap + ' 条' : '',
+  };
+}
+
 /* ============ 脏数据 UI ============ */
 function updateDirtyUI() {
   $('dirtyBanner').classList.toggle('show', Object.values(store.dirty).some(Boolean));
@@ -40,11 +54,7 @@ export function clearAllDirty() {
 export function renderLayer(key, onSaved) {
   const L = LAYERS.find((l) => l.key === key);
   const list = store.model[key];
-  const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
-  const showCap = key === 'universal';
-  const ratio = showCap && cap > 0 ? list.length / cap : 0;
-  const capCls = !showCap ? '' : ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '';
-  const capText = showCap ? `${list.length} / ${cap} 条` : `${list.length} 条`;
+  const meta = capMeta(key, list);
   const el = $('tabLayer');
   el.innerHTML = `
     <div class="panel ${store.dirty[key] ? 'dirty' : ''} layer-panel-${key}" id="panel-${key}">
@@ -62,7 +72,7 @@ export function renderLayer(key, onSaved) {
           </div>
         </div>
         <div class="panel-head-actions">
-          <span class="meta${capCls}" id="cnt-${key}" title="${showCap ? '容量上限 ' + cap + ' 条' : ''}">${capText}</span>
+          <span class="meta${meta.cls}" id="cnt-${key}" title="${meta.title}">${meta.text}</span>
           <button class="btn btn-sm btn-soft" id="add-${key}">${icon('plus', 13)} 添加条目</button>
           <button class="btn btn-sm btn-primary" id="save-${key}">${icon('check', 13)} 保存本层</button>
         </div>
@@ -117,11 +127,9 @@ export function renderRows(key) {
   }
   const cnt = $('cnt-' + key);
   if (cnt) {
-    const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
-    const showCap = key === 'universal';
-    const ratio = showCap && cap > 0 ? list.length / cap : 0;
-    cnt.textContent = showCap ? `${list.length} / ${cap} 条` : `${list.length} 条`;
-    cnt.className = 'meta' + (!showCap ? '' : ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '');
+    const meta = capMeta(key, list);
+    cnt.textContent = meta.text;
+    cnt.className = 'meta' + meta.cls;
   }
   const st = $('status-' + key);
   if (st) st.textContent = filtered.length === list.length ? '' : `显示 ${filtered.length}/${list.length}`;

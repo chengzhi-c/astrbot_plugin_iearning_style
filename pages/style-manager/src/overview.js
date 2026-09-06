@@ -1,12 +1,10 @@
 // overview.js — 总览视图：统计卡、三层分布、全量数据预览、Top 梗榜。
 // 所有用户内容一律 textContent 渲染（XSS 防护约定，见 AGENTS.md）。
 
-import { store, LAYERS, DEFAULT_CAPS, counts } from "./store.js";
+import { store, LAYERS, LAYER_KEYS, DEFAULT_CAPS, counts } from "./store.js";
 import { $, el } from "./util.js";
 import { icon } from "./icons.js";
 import { emptyState, toast } from "./ui.js";
-
-const LAYER_ORDER = ["universal", "contextual", "specific"];
 
 export function donutSegments(n) {
 	return [
@@ -107,10 +105,10 @@ export function renderOverview(onLearn) {
           ${donutHTML(n)}
         </div>
       </div>
-      ${LAYER_ORDER.map((k, i) => {
-				const L = LAYERS[i];
+      ${LAYER_KEYS.map((k) => {
+				const L = LAYERS.find((l) => l.key === k);
 				const cnt =
-					counts(sid)[{ universal: "u", contextual: "c", specific: "p" }[k]];
+					n[{ universal: "u", contextual: "c", specific: "p" }[k]];
 				const cap =
 					caps[k] ?? DEFAULT_CAPS[k];
 				const pct = cap > 0 ? Math.min(100, Math.round((cnt / cap) * 100)) : 0;

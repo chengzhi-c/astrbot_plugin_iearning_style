@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { Api, setBridge, unwrap } from "../../pages/style-manager/src/api.js";
-import { validateLayer } from "../../pages/style-manager/src/layer.js";
+import { validateLayer, capMeta } from "../../pages/style-manager/src/layer.js";
 import {
 	acceptSavedLayer,
 	allSids,
@@ -124,6 +124,20 @@ test("layer validation falls back to shared default caps", () => {
 		content: `s${i}`,
 	}));
 	assert.equal(validateLayer("universal").ok, false);
+});
+
+test("cap meta computes shared badge text and tone", () => {
+	resetStore();
+	store.caps = null;
+	const full = capMeta(
+		"universal",
+		Array.from({ length: 10 }, () => ({})),
+	);
+	assert.equal(full.text, "10 / 10 条");
+	assert.equal(full.cls, " full");
+	const other = capMeta("specific", [{}, {}]);
+	assert.equal(other.text, "2 条");
+	assert.equal(other.cls, "");
 });
 
 test("layer validation catches empty and duplicate entries before save-all", () => {

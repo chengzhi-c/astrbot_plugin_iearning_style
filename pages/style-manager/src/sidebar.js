@@ -27,8 +27,10 @@ export function renderSidebar(onSelect) {
       const filter = store.sessFilter.toLowerCase();
       return !filter || s.toLowerCase().includes(filter)
         || sessionDisplayName(s).toLowerCase().includes(filter);
-    })
-    .sort((a, b) => lastActivity(b, store.snapshot) - lastActivity(a, store.snapshot));
+    });
+  const activity = new Map();
+  for (const s of sids) activity.set(s, lastActivity(s, store.snapshot));
+  sids.sort((a, b) => activity.get(b) - activity.get(a));
   $('sessCnt').textContent = sids.length + ' 个';
   renderSideFoot();
   if (!sids.length) {
