@@ -116,6 +116,13 @@ def test_learn_command_preserves_success_message():
     assert outputs[-1].startswith("学习分析完成！\n")
 
 
+def test_learn_command_distinguishes_no_change_result():
+    outputs = run(
+        collect_learn_output(LearnResult(True, "learned", changed=False))
+    )
+    assert "暂无新风格" in outputs[-1]
+
+
 def test_learn_command_does_not_claim_success_when_save_fails():
     outputs = run(
         collect_learn_output(
@@ -330,6 +337,72 @@ def test_message_hook_saves_group_name_for_non_text_messages():
         "阿c:GroupMessage:272372284": "只发图片的群"
     }
     assert data_manager.messages == []
+
+
+def test_message_hook_throttles_expensive_group_lookup():
+    calls = []
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    async def get_group(group_id):
+        calls.append(group_id)
+        return SimpleNamespace(group_name="节流测试群")
+
+    def make_event():
+        return SimpleNamespace(
+            unified_msg_origin="group:throttle-1",
+            message_obj=SimpleNamespace(
+                group_id="throttle-1",
+                raw_message={"post_type": "message"},
+                sender=SimpleNamespace(),
+            ),
+            get_group=get_group,
+            get_sender_id=lambda: "user-1",
+            get_self_id=lambda: "bot-1",
+            get_sender_name=lambda: "小明",
+            get_message_str=lambda: "大家好",
+        )
+
+    run(IearningStylePlugin.on_message(plugin, make_event()))
+    run(IearningStylePlugin.on_message(plugin, make_event()))
+
+    assert calls == ["throttle-1"]
+    assert data_manager.messages[0][1]["session_name"] == "节流测试群"
+    assert "session_name" not in data_manager.messages[1][1]
+
+
+def test_message_hook_retries_expensive_lookup_after_cooldown_window():
+    calls = []
+    data_manager = RecordingDataManager()
+    plugin = SimpleNamespace(_storage_error=None, data_manager=data_manager)
+
+    async def get_group(group_id):
+        calls.append(group_id)
+        return SimpleNamespace(group_name="节流测试群")
+
+    def make_event():
+        return SimpleNamespace(
+            unified_msg_origin="group:throttle-2",
+            message_obj=SimpleNamespace(
+                group_id="throttle-2",
+                raw_message={"post_type": "message"},
+                sender=SimpleNamespace(),
+            ),
+            get_group=get_group,
+            get_sender_id=lambda: "user-1",
+            get_self_id=lambda: "bot-1",
+            get_sender_name=lambda: "小明",
+            get_message_str=lambda: "大家好",
+        )
+
+    run(IearningStylePlugin.on_message(plugin, make_event()))
+    assert calls == ["throttle-2"]
+    for key in plugin._group_name_cooldown:
+        plugin._group_name_cooldown[key] -= 601.0
+    run(IearningStylePlugin.on_message(plugin, make_event()))
+
+    assert calls == ["throttle-2", "throttle-2"]
+    assert data_manager.messages[-1][1]["session_name"] == "节流测试群"
 
 
 def test_recovery_failure_keeps_plugin_unavailable(monkeypatch):

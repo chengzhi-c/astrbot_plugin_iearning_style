@@ -19,6 +19,9 @@ _LEARN_FAILURE_MESSAGES = {
 }
 _RECOVERY_FAILURE_MESSAGE = "风格数据恢复失败，插件已停止读写；请修复保存事务后重启。"
 _GROUP_NAME_PLACEHOLDERS = {"n/a", "na", "unknown", "未知", "未命名"}
+# 昂贵群名回退（get_group / 平台接口）的 per-session 节流窗口（秒）。
+# 展示名只是装饰字段：窗口内不再重复触发网络 I/O，空名永不覆盖已有名。
+GROUP_NAME_RETRY_SECONDS = 600.0
 
 
 def _usable_group_name(value: object, group_id: object = None) -> str:
@@ -32,8 +35,13 @@ def _usable_group_name(value: object, group_id: object = None) -> str:
     return name
 
 
-async def _group_name_from_event(event: AstrMessageEvent) -> str:
-    """从 AstrBot 消息事件提取平台已提供的群名。"""
+async def _group_name_from_event(event: AstrMessageEvent, _cooldown=None) -> str:
+    """从 AstrBot 消息事件提取平台已提供的群名。
+
+    廉价属性读取永远执行；只有全部落空才走昂贵的回退接口。
+    传入 _cooldown（dict[group_id, 下次允许尝试时间(monotonic)]）时，
+    窗口内的重复回退直接返回空，避免每条消息触发网络 I/O。
+    """
     message_obj = getattr(event, "message_obj", None)
     get_group_id = getattr(event, "get_group_id", None)
     group_id = get_group_id() if callable(get_group_id) else None
@@ -78,6 +86,12 @@ async def _group_name_from_event(event: AstrMessageEvent) -> str:
     get_group = getattr(event, "get_group", None)
     if not group_id:
         return ""
+    if _cooldown is not None:
+        now = time.monotonic()
+        key = str(group_id)
+        if now < _cooldown.get(key, float("-inf")):
+            return ""
+        _cooldown[key] = now + GROUP_NAME_RETRY_SECONDS
 
     fetched_group = None
     if callable(get_group):
@@ -177,6 +191,7 @@ class IearningStylePlugin(Star):
         self.style_page = StylePage(
             self.context, self.data_manager, self.config, self.learning_manager
         )
+        self._group_name_cooldown: dict[str, float] = {}
 
     async def initialize(self):
         if getattr(self, "_storage_error", None):
@@ -196,7 +211,8 @@ class IearningStylePlugin(Star):
         session_id = event.unified_msg_origin
         message_content = event.get_message_str()
 
-        group_name = await _group_name_from_event(event)
+        cooldown = self.__dict__.setdefault("_group_name_cooldown", {})
+        group_name = await _group_name_from_event(event, _cooldown=cooldown)
         if group_name:
             set_session_name = getattr(self.data_manager, "set_session_name", None)
             if callable(set_session_name):
@@ -284,7 +300,13 @@ class IearningStylePlugin(Star):
                 return
 
             summary = self.style_injector.get_style_summary(session_id)
-            response = "学习分析完成！\n" + StyleInjector.format_summary_block(summary)
+            if result.changed:
+                response = "学习分析完成！\n" + StyleInjector.format_summary_block(summary)
+            else:
+                response = (
+                    "学习分析完成，暂无新风格特征（已是最新）。\n"
+                    + StyleInjector.format_summary_block(summary)
+                )
 
             yield event.plain_result(response)
 
