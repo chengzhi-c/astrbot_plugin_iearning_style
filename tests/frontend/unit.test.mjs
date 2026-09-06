@@ -8,6 +8,7 @@ import {
 	acceptSavedLayer,
 	allSids,
 	counts,
+	DEFAULT_CAPS,
 	revisionFor,
 	store,
 } from "../../pages/style-manager/src/store.js";
@@ -109,6 +110,20 @@ test("full preview labels specific data accurately", () => {
 		}),
 		"通用风格：简短；情境提示：问候→回应；特定层数据：内部梗",
 	);
+});
+
+test("layer validation falls back to shared default caps", () => {
+	resetStore();
+	store.caps = null;
+	assert.deepEqual(DEFAULT_CAPS, {
+		universal: 10,
+		contextual: 150,
+		specific: 200,
+	});
+	store.model.universal = Array.from({ length: 11 }, (_, i) => ({
+		content: `s${i}`,
+	}));
+	assert.equal(validateLayer("universal").ok, false);
 });
 
 test("layer validation catches empty and duplicate entries before save-all", () => {

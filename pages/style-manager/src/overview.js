@@ -1,7 +1,7 @@
 // overview.js — 总览视图：统计卡、三层分布、全量数据预览、Top 梗榜。
 // 所有用户内容一律 textContent 渲染（XSS 防护约定，见 AGENTS.md）。
 
-import { store, LAYERS, counts } from "./store.js";
+import { store, LAYERS, DEFAULT_CAPS, counts } from "./store.js";
 import { $, el } from "./util.js";
 import { icon } from "./icons.js";
 import { emptyState, toast } from "./ui.js";
@@ -112,7 +112,7 @@ export function renderOverview(onLearn) {
 				const cnt =
 					counts(sid)[{ universal: "u", contextual: "c", specific: "p" }[k]];
 				const cap =
-					caps[k] ?? { universal: 10, contextual: 150, specific: 200 }[k];
+					caps[k] ?? DEFAULT_CAPS[k];
 				const pct = cap > 0 ? Math.min(100, Math.round((cnt / cap) * 100)) : 0;
 				return `<div class="stat layer-stat-card card-${k}">
           <div class="stat-head">

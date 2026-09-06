@@ -33,6 +33,9 @@ export const LAYERS = [
 
 export const LAYER_KEYS = LAYERS.map((l) => l.key);
 
+/** 各层容量离线兜底（后端 stats.caps 优先，仅桥接失败时使用，与后端常量对齐） */
+export const DEFAULT_CAPS = { universal: 10, contextual: 150, specific: 200 };
+
 export const store = {
 	snapshot: null, // 服务器原始三层快照
 	sid: null, // 当前选中的会话

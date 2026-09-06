@@ -1,7 +1,7 @@
 // layer.js — 三层表征编辑视图：面板、行渲染、客户端校验、保存（整层替换）。
 // 数据模型由后端 DataManager 统一规范化；保存结果通过回调交给 app.js 编排。
 
-import { store, LAYERS, revisionFor, acceptSavedLayer } from './store.js';
+import { store, LAYERS, DEFAULT_CAPS, revisionFor, acceptSavedLayer } from './store.js';
 import { Api } from './api.js';
 import { $, el, esc, clone } from './util.js';
 import { icon } from './icons.js';
@@ -40,7 +40,7 @@ export function clearAllDirty() {
 export function renderLayer(key, onSaved) {
   const L = LAYERS.find((l) => l.key === key);
   const list = store.model[key];
-  const cap = (store.caps && store.caps[key]) ?? ({ universal: 10, contextual: 150, specific: 200 })[key];
+  const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
   const showCap = key === 'universal';
   const ratio = showCap && cap > 0 ? list.length / cap : 0;
   const capCls = !showCap ? '' : ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '';
@@ -117,7 +117,7 @@ export function renderRows(key) {
   }
   const cnt = $('cnt-' + key);
   if (cnt) {
-    const cap = (store.caps && store.caps[key]) ?? ({ universal: 10, contextual: 150, specific: 200 })[key];
+    const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
     const showCap = key === 'universal';
     const ratio = showCap && cap > 0 ? list.length / cap : 0;
     cnt.textContent = showCap ? `${list.length} / ${cap} 条` : `${list.length} 条`;
@@ -252,7 +252,7 @@ function addRow(key) {
 export function validateLayer(key) {
   const entries = store.model?.[key];
   if (!Array.isArray(entries)) return { ok: false, message: '当前层数据不可用' };
-  const cap = (store.caps && store.caps[key]) ?? ({ universal: 10, contextual: 150, specific: 200 })[key];
+  const cap = (store.caps && store.caps[key]) ?? DEFAULT_CAPS[key];
   if (entries.length > cap) return { ok: false, message: `条目数超过容量上限 ${cap}` };
   const seen = new Set();
   for (let i = 0; i < entries.length; i++) {
