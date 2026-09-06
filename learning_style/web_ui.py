@@ -7,11 +7,21 @@
 Web API（前端经 window.AstrBotPluginPage 桥接调用，路由须以插件名开头）:
 
     GET  /astrbot_plugin_iearning_style/snapshot
-         → {"status": "ok", "data": {universal, contextual, specific}}
+         → {"status": "ok", "data": {universal, contextual, specific,
+             session_names, revisions}}
     POST /astrbot_plugin_iearning_style/layer
-         body {"sid", "layer", "entries"} → {"status": "ok"} / 400
+         body {"sid", "layer", "entries", "base_revision"} → {"status": "ok"} / 400 / 409
+    GET  /astrbot_plugin_iearning_style/stats
+         → {"status": "ok", "data": {total_sessions, total_entries,
+             injection_enabled, caps}}
+    POST /astrbot_plugin_iearning_style/learn
+         body {"sid"} → {"status": "ok"} / 400 / 409 / 422 / 500 / 503
     POST /astrbot_plugin_iearning_style/deduplicate
          body {"sid"} → per-layer removal counts / 500
+    POST /astrbot_plugin_iearning_style/clear
+         body {"sid"} → {"status": "ok"} / 500
+    POST /astrbot_plugin_iearning_style/export
+         body {"sid"} → {"status": "ok", "data": {sid, universal, contextual, specific}}
 """
 
 from typing import Any
