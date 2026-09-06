@@ -592,16 +592,22 @@ class DataManager:
         return digest.hexdigest()
 
     @staticmethod
-    def _write_json_file(path: str, data: Any) -> None:
+    def _write_json_file(path: str, data: Any, *, indent: int | None = 4) -> None:
         with open(path, "w", encoding="utf-8") as file:
-            json.dump(data, file, ensure_ascii=False, indent=4)
+            if indent is None:
+                json.dump(data, file, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(data, file, ensure_ascii=False, indent=indent)
             file.flush()
             os.fsync(file.fileno())
 
     def _write_json_atomic(self, path: str, data: Any) -> None:
         tmp_path = f"{path}.tmp"
+        # 聊天记录是纯机器数据且重写频繁，用紧凑格式；
+        # 表征层保持缩进可读（可手工查看/编辑）。
+        indent = None if path == self.chat_history_file else 4
         try:
-            self._write_json_file(tmp_path, data)
+            self._write_json_file(tmp_path, data, indent=indent)
             os.replace(tmp_path, path)
         finally:
             if os.path.exists(tmp_path):
@@ -1267,7 +1273,8 @@ class DataManager:
                 temp_name = f"{os.path.basename(target)}.txn.{transaction_id}.tmp"
                 temp_path = os.path.join(self.data_dir, temp_name)
                 data = stores[layer] if stores is not None else getattr(self, layer)
-                self._write_json_file(temp_path, data)
+                indent = None if layer == "chat_history" else 4
+                self._write_json_file(temp_path, data, indent=indent)
                 entries.append(
                     {
                         "layer": layer,

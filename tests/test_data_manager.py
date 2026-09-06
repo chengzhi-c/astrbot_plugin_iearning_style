@@ -1710,3 +1710,25 @@ async def _revision_cache_seq(dm, out):
     await asyncio.sleep(0)
     out["rev2"] = dm.layer_revision("s1", "universal")
     out["snap_rev"] = dm.get_snapshot()["revisions"]["universal"]["s1"]
+
+
+def test_chat_history_saved_compact_universal_saved_indented(tmp_path):
+    run(_compact_format_seq(tmp_path))
+
+
+async def _compact_format_seq(tmp_path):
+    dm = _new_dm(tmp_path)
+    dm.add_message_to_history("s1", {"sender": "a", "content": "hi"})
+    await dm.force_save()
+    with open(os.path.join(str(tmp_path), "chat_history.json"), encoding="utf-8") as f:
+        history_text = f.read()
+    assert "\n" not in history_text
+    assert json.loads(history_text)["s1"][0]["content"] == "hi"
+
+    dm.replace_universal("s1", ["风格"])
+    await asyncio.sleep(0)
+    await dm.force_save()
+    with open(os.path.join(str(tmp_path), "universal.json"), encoding="utf-8") as f:
+        universal_text = f.read()
+    assert "\n" in universal_text
+    assert json.loads(universal_text)["s1"][0]["content"] == "风格"
