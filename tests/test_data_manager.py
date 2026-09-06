@@ -326,6 +326,7 @@ async def _force_save_seq(dm):
 
 
 def test_handle_old_format_migrates_to_universal(tmp_path):
+
     old_data = {"s1": [{"content": "语气活泼"}, {"content": "爱用短句"}]}
     with open(os.path.join(str(tmp_path), "styles.json"), "w", encoding="utf-8") as f:
         json.dump(old_data, f)
@@ -348,6 +349,45 @@ def test_handle_old_format_handles_invalid_json(tmp_path):
     dm = _new_dm(tmp_path)
     assert os.path.exists(os.path.join(str(tmp_path), "styles.json"))
     assert "s1" not in dm.universal
+
+
+def test_handle_old_format_merges_with_existing_universal(tmp_path):
+    with open(os.path.join(str(tmp_path), "universal.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "s1": [
+                    {
+                        "content": "新风格",
+                        "proficiency": 10,
+                        "confirmed_rounds": 1,
+                        "last_updated": 0,
+                    }
+                ]
+            },
+            f,
+        )
+    with open(os.path.join(str(tmp_path), "styles.json"), "w", encoding="utf-8") as f:
+        json.dump({"s1": [{"content": "旧风格"}]}, f)
+
+    dm = _new_dm(tmp_path)
+    contents = [t["content"] for t in dm.universal.get("s1", [])]
+    assert "新风格" in contents
+    assert "旧风格" in contents
+
+
+def test_recover_atomic_temp_accepts_structurally_valid_needs_cleanup_tmp(
+    tmp_path,
+):
+    with open(
+        os.path.join(str(tmp_path), "session_names.json.tmp"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        json.dump({"s1": "  群A  "}, f)
+
+    dm = _new_dm(tmp_path)
+    assert dm.session_names == {"s1": "群A"}
+    assert not os.path.exists(os.path.join(str(tmp_path), "session_names.json.tmp"))
 
 
 # ==================== clear_session / export_session / global_stats ====================
@@ -1592,3 +1632,81 @@ def test_public_read_interfaces_do_not_expose_internal_layers(tmp_path):
     assert dm.universal["s1"][0]["content"] == "style"
     assert dm.contextual["s1"][0]["scene"] == "scene"
     assert dm.specific["s1"][0]["content"] == "meme"
+
+
+# ==================== 注入去重缓存 + revision 缓存 ====================
+
+
+def test_injection_reuses_deduped_layers_without_recompute(dm):
+    out: dict = {}
+    run(_injection_cache_seq(dm, out))
+    assert out["second"] == out["first"]
+    assert out["calls"] == []
+
+
+async def _injection_cache_seq(dm, out):
+    dm.replace_universal("s1", ["语气活泼"])
+    await asyncio.sleep(0)
+    dm.add_contextual("s1", "有人发消息", "全员复读")
+    await asyncio.sleep(0)
+    out["first"] = dm.get_injection_data("s1", "")
+    calls = []
+    original = dm._deduplicate_entries
+
+    def counting(layer, entries):
+        if layer in ("universal", "contextual"):
+            calls.append(layer)
+        return original(layer, entries)
+
+    dm._deduplicate_entries = counting
+    try:
+        out["second"] = dm.get_injection_data("s1", "")
+    finally:
+        dm._deduplicate_entries = original
+    out["calls"] = calls
+
+
+def test_injection_cache_invalidated_after_replace(dm):
+    out: dict = {}
+    run(_injection_invalidate_seq(dm, out))
+    assert [t["content"] for t in out["second"]["universal"]] == ["新风格"]
+
+
+async def _injection_invalidate_seq(dm, out):
+    dm.replace_universal("s1", ["旧风格"])
+    await asyncio.sleep(0)
+    out["first"] = dm.get_injection_data("s1", "")
+    dm.replace_universal("s1", ["新风格"])
+    await asyncio.sleep(0)
+    out["second"] = dm.get_injection_data("s1", "")
+
+
+def test_has_styles_for_session_matches_layer_contents(dm):
+    async def seq():
+        assert dm.has_styles_for_session("s1") is False
+        dm.replace_universal("s1", ["语气活泼"])
+        await asyncio.sleep(0)
+        assert dm.has_styles_for_session("s1") is True
+        dm.clear_session("s1")
+        assert dm.has_styles_for_session("s1") is False
+
+    run(seq())
+
+
+def test_layer_revision_cached_and_invalidated(dm):
+    out: dict = {}
+    run(_revision_cache_seq(dm, out))
+    assert out["rev2"] != out["rev1"]
+    assert out["snap_rev"] == out["rev2"]
+
+
+async def _revision_cache_seq(dm, out):
+    dm.replace_universal("s1", ["语气活泼"])
+    await asyncio.sleep(0)
+    out["rev1"] = dm.layer_revision("s1", "universal")
+    assert dm._revision_cache[("universal", "s1")] == out["rev1"]
+    assert dm.layer_revision("s1", "universal") == out["rev1"]
+    dm.replace_universal("s1", ["全新风格"])
+    await asyncio.sleep(0)
+    out["rev2"] = dm.layer_revision("s1", "universal")
+    out["snap_rev"] = dm.get_snapshot()["revisions"]["universal"]["s1"]

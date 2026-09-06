@@ -190,7 +190,12 @@ def test_layer_api_returns_entries_and_revision(tmp_path):
 def test_layer_api_maps_revision_conflict(tmp_path):
     data_manager = DataManager(str(tmp_path), {})
     stale_revision = data_manager.layer_revision("s1", "universal")
-    data_manager.universal["s1"] = [{"content": "server"}]
+
+    async def server_update():
+        data_manager.replace_universal("s1", ["server"])
+        await asyncio.sleep(0)
+
+    run(server_update())
     web_ui.request = FakeRequest({
         "sid": "s1",
         "layer": "universal",

@@ -103,6 +103,11 @@ class DataManager:
         self._save_lock = asyncio.Lock()
         self._dirty: set[str] = set()
         self._save_timer: asyncio.Task | None = None
+        # 进程内存缓存：去重后的注入层与 revision 哈希。
+        # 写入口变更即失效（见 _mark_dirty / replace_layer / deduplicate_session），
+        # 重启即失，不进持久化格式。
+        self._injection_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self._revision_cache: dict[tuple[str, str], str] = {}
         self._save_delay = 5.0
         self._retry_delays = (5.0, 30.0, 120.0, 300.0)
         self._retry_index = 0
@@ -174,7 +179,11 @@ class DataManager:
                             "last_updated": now,
                         }
                     )
-                migrated_store[sid] = normalized
+                # 同会话已存在新格式数据时合并（去重），不覆盖。
+                merged, _, _ = self._deduplicate_entries(
+                    "universal", migrated_store.get(sid, []) + normalized
+                )
+                migrated_store[sid] = merged
 
             self._write_json_atomic(self.universal_file, migrated_store)
             self.universal = migrated_store
@@ -248,6 +257,9 @@ class DataManager:
         unique = list(dict.fromkeys(patterns))
         if len(unique) == 1:
             return unique[0]
+        # 分支重置组 (?|...) 是有意选择：各分支的数字反向引用 (\1 等)
+        # 在合并后仍指向本分支内的分组，普通 (?:...) 会改写编号破坏语义。
+        # 依赖 regex 引擎方言（本仓库统一用 regex 编译触发正则）。
         branches = "|".join(f"(?:{pattern})" for pattern in unique)
         combined = f"(?|{branches})"
         try:
@@ -542,15 +554,26 @@ class DataManager:
                 logger.error(f"清理 {attr} 文件失败: {exc}")
 
     def _is_valid_layer_file(self, layer: str, path: str) -> bool:
+        """结构有效即有效：能解析 + 顶层 dict + 每会话为 list。
+
+        条目级瑕疵由加载期清理（备份后重写），不判文件无效，
+        避免可恢复的临时文件被误清。
+        """
         try:
             with open(path, encoding="utf-8") as file:
                 raw = json.load(file)
-            cleaned, changed = self._normalize_store(layer, raw)
+            if not isinstance(raw, dict):
+                return False
             if layer == "session_names":
-                return not changed
+                return all(
+                    isinstance(sid, str)
+                    and sid.strip()
+                    and isinstance(name, str)
+                    for sid, name in raw.items()
+                )
             return all(
-                len(cleaned[session_id]) == len(entries)
-                for session_id, entries in raw.items()
+                isinstance(sid, str) and sid.strip() and isinstance(entries, list)
+                for sid, entries in raw.items()
             )
         except (OSError, json.JSONDecodeError, ValueError):
             return False
@@ -880,6 +903,14 @@ class DataManager:
             "specific": self.get_specific_for_session(session_id),
         }
 
+    def has_styles_for_session(self, session_id: str) -> bool:
+        """轻量判空：只读长度，不拷贝（供注入开关等热路径使用）。"""
+        return bool(
+            self.universal.get(session_id)
+            or self.contextual.get(session_id)
+            or self.specific.get(session_id)
+        )
+
     def add_or_update_specific(self, session_id: str, content: str, trigger_regex: str):
         content = content.strip()
         try:
@@ -958,12 +989,21 @@ class DataManager:
     def get_injection_data(
         self, session_id: str, user_message: str = ""
     ) -> dict[str, Any]:
-        universal, _, _ = self._deduplicate_entries(
-            "universal", self.universal.get(session_id, [])
-        )
-        contextual, _, _ = self._deduplicate_entries(
-            "contextual", self.contextual.get(session_id, [])
-        )
+        cached = self._injection_cache.get(session_id)
+        if cached is not None:
+            universal = copy.deepcopy(cached["universal"])
+            contextual = copy.deepcopy(cached["contextual"])
+        else:
+            universal, _, _ = self._deduplicate_entries(
+                "universal", self.universal.get(session_id, [])
+            )
+            contextual, _, _ = self._deduplicate_entries(
+                "contextual", self.contextual.get(session_id, [])
+            )
+            self._injection_cache[session_id] = {
+                "universal": copy.deepcopy(universal),
+                "contextual": copy.deepcopy(contextual),
+            }
         specific = self.specific.get(session_id, [])
         contents = []
         seen_aliases: set[str] = set()
@@ -1172,6 +1212,13 @@ class DataManager:
     def _mark_dirty(self, *layers: str) -> None:
         """Mark changed layers and ensure one delayed save is active."""
         self._dirty.update(layers)
+        if "universal" in layers or "contextual" in layers:
+            self._injection_cache.clear()
+        if self._revision_cache and (
+            "universal" in layers or "contextual" in layers or "specific" in layers
+        ):
+            for key in [key for key in self._revision_cache if key[0] in layers]:
+                del self._revision_cache[key]
         self._schedule_save(self._save_delay)
 
     def _schedule_save(self, delay: float) -> None:
@@ -1344,6 +1391,9 @@ class DataManager:
     def layer_revision(self, session_id: str, layer: str) -> str:
         if layer not in ("universal", "contextual", "specific"):
             raise ValueError(f"unknown layer: {layer}")
+        cached = self._revision_cache.get((layer, session_id))
+        if cached is not None:
+            return cached
         entries = getattr(self, layer).get(session_id, [])
         canonical = json.dumps(
             entries,
@@ -1351,7 +1401,9 @@ class DataManager:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        return hashlib.sha256(canonical).hexdigest()
+        revision = hashlib.sha256(canonical).hexdigest()
+        self._revision_cache[(layer, session_id)] = revision
+        return revision
 
     def get_snapshot(self) -> dict[str, Any]:
         """返回三层表征的实时快照（供 WebUI 展示）。"""
@@ -1454,6 +1506,9 @@ class DataManager:
             for layer in layers:
                 setattr(self, layer, updated_stores[layer])
             self._dirty.difference_update(layers)
+            self._injection_cache.pop(session_id, None)
+            for layer in layers:
+                self._revision_cache.pop((layer, session_id), None)
 
             return {
                 "removed": removed,
@@ -1622,6 +1677,9 @@ class DataManager:
             self._write_json_atomic(self._layer_files[layer], updated_store)
             setattr(self, layer, updated_store)
             self._dirty.discard(layer)
+            if layer in ("universal", "contextual"):
+                self._injection_cache.pop(session_id, None)
+            self._revision_cache.pop((layer, session_id), None)
             return {
                 "entries": copy.deepcopy(normalized),
                 "revision": self.layer_revision(session_id, layer),

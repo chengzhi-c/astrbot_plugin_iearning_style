@@ -30,9 +30,7 @@ class StyleInjector:
     def should_inject_style(self, session_id: str) -> bool:
         if not self.data_manager.enable_style_injection:
             return False
-
-        layers = self.data_manager.get_session_layers(session_id)
-        return any(layers.values())
+        return bool(self.data_manager.has_styles_for_session(session_id))
 
     def inject_style_to_prompt(
         self, session_id: str, original_system_prompt: str, user_message: str = ""
