@@ -82,7 +82,6 @@ class Scheduler:
             await asyncio.sleep(self.maintenance_interval)
             logger.info("开始执行周期性风格维护...")
             await self._perform_maintenance()
-            await asyncio.sleep(0)
 
     async def _perform_maintenance(self):
         """合并情境缓冲区到通用/特定，不处理已确认的情境。"""

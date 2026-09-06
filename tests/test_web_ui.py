@@ -214,7 +214,6 @@ def test_layer_api_maps_revision_conflict(tmp_path):
 def test_registers_seven_public_routes():
     context = RegisteringContext()
     page = web_ui.StylePage(context, FakeDataManager(), {"webui_enabled": True})
-
     page.register()
 
     assert [(path, methods) for path, _, methods, _ in context.routes] == [
@@ -226,6 +225,12 @@ def test_registers_seven_public_routes():
         (f"/{web_ui.PLUGIN_NAME}/clear", ["POST"]),
         (f"/{web_ui.PLUGIN_NAME}/export", ["POST"]),
     ]
+
+
+def test_invalid_webui_flag_falls_back_to_enabled():
+    page = web_ui.StylePage(SimpleNamespace(), FakeDataManager(), {"webui_enabled": "yes"})
+
+    assert page.webui_enabled is True
 
 
 def test_disabled_webui_registers_no_routes():
