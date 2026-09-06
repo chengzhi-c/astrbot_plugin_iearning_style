@@ -26,6 +26,11 @@ class LearnResult:
     changed: bool = False
 
 
+# LLM 常犯的尾逗号（{"a": [1,],}）：失败时只做这一次最小清理重试，
+# 单引号/注释/截断仍判无效，保持严格。
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+
+
 def _extract_json(text: str) -> str | None:
     """从 LLM 输出提取最外层 JSON 对象，容忍围栏与尾随解释。
 
@@ -142,7 +147,10 @@ class LearningManager:
                 json_text = _extract_json(completion_text)
                 if json_text is None:
                     raise ValueError("response does not contain a JSON object")
-                payload = json.loads(json_text)
+                try:
+                    payload = json.loads(json_text)
+                except json.JSONDecodeError:
+                    payload = json.loads(_TRAILING_COMMA.sub(r"\1", json_text))
                 changed = self.data_manager.apply_learning_result(session_id, payload)
             except ValueError:
                 logger.warning("学习 provider 返回的 JSON 无效")
@@ -154,9 +162,16 @@ class LearningManager:
             self._active_sessions.discard(session_id)
 
     def _build_prompt(self, session_id: str, chat_history: list[dict[str, Any]]) -> str:
+        # 展示转义：断开内容里的 "</"（如 </chat_history>），只影响 prompt
+        # 显示，不写回存储；LLM 看到的仍是可读文本。
         history_str = json.dumps(
             [
-                {"sender": msg["sender"], "content": msg["content"]}
+                {
+                    "sender": msg["sender"],
+                    "content": msg["content"].replace("</", "<\u200b/")
+                    if isinstance(msg["content"], str)
+                    else msg["content"],
+                }
                 for msg in chat_history
             ],
             ensure_ascii=False,
